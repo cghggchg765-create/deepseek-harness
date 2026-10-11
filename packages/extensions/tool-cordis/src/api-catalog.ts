@@ -2875,6 +2875,137 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'supervisor',
+    summary: 'The supervised-terminal control plane: the registry of driven terminals, the one detection pipeline every terminal tool funnels its settlement through, the durable heartbeat, output-log, and plan stores, and the watchdog that wakes an idle agent when a terminal goes quiet.',
+    description: 'The supervised-terminal control plane: the registry of driven terminals, the one detection pipeline every terminal tool funnels its settlement through, the durable heartbeat, output-log, and plan stores, and the watchdog that wakes an idle agent when a terminal goes quiet.',
+    methods: [
+      {
+        signature: 'readonly config: ResolvedConfig',
+        description: 'Resolved configuration.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly sessions: Map<string, SupervisedSession> = new Map()',
+        description: 'Terminals this plugin has driven, keyed by terminal session id.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly heartbeats: HeartbeatStore',
+        description: 'Heartbeat records.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly spill: SpillLog',
+        description: 'Append-only output logs.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly plans: PlanStore',
+        description: 'Task plans.',
+        parameters: [],
+      },
+      {
+        signature: 'forget(sessionId: string): void',
+        description: 'Drop one terminal from the registry, e.g. after it was closed.',
+        parameters: [{ name: 'sessionId', description: 'terminal session id to forget.' }],
+      },
+      {
+        signature: 'async observe( owner: Agent, sessionId: TerminalSessionId, text: string, waitReason: TerminalWaitReason, status: TerminalSessionStatus, now: number, ): Promise<SettlementReport>',
+        description: 'Run one settlement through the detection pipeline and record it.',
+        parameters: [{ name: 'owner', description: 'agent driving the terminal.' }, { name: 'sessionId', description: 'terminal session id.' }, { name: 'text', description: 'settlement output.' }, { name: 'waitReason', description: 'wait reason reported by the terminal operation.' }, { name: 'status', description: 'top-level session status at settlement.' }, { name: 'now', description: 'epoch milliseconds of the observation.' }],
+        returns: 'marks, rule hits, and spill facts for the tool result.',
+      },
+      {
+        signature: 'async inspect( owner: Agent, sessionId: TerminalSessionId, text: string, status: TerminalSessionStatus, now: number, ): Promise<InspectionReport>',
+        description: 'Scan retained scrollback without recording a settlement. A read observes text the supervisor already has; it neither appends to the output log nor advances the heartbeat, because doing either would let a poll of a stuck terminal pass for progress.',
+        parameters: [{ name: 'owner', description: 'agent driving the terminal.' }, { name: 'sessionId', description: 'terminal session id.' }, { name: 'text', description: 'retained scrollback that was read.' }, { name: 'status', description: 'top-level session status at the read.' }, { name: 'now', description: 'epoch milliseconds of the read.' }],
+        returns: 'marks and rule hits for the inspected text.',
+      },
+      {
+        signature: 'declareAgent(owner: Agent, sessionId: TerminalSessionId, kind: AgentKind, status: TerminalSessionStatus): void',
+        description: 'Record which CLI runs in a terminal, so its output is classified with that agent\'s characteristics from the next observation on. Declaring it is how a terminal the supervisor did not launch becomes classifiable.',
+        parameters: [{ name: 'owner', description: 'agent driving the terminal.' }, { name: 'sessionId', description: 'terminal session id.' }, { name: 'kind', description: 'hosted agent kind.' }, { name: 'status', description: 'status observed at the declaration.' }],
+      },
+      {
+        signature: 'track(owner: Agent, sessionId: TerminalSessionId, status: TerminalSessionStatus): SupervisedSession',
+        description: 'Register or fetch the registry entry for one terminal.',
+        parameters: [{ name: 'owner', description: 'agent driving the terminal.' }, { name: 'sessionId', description: 'terminal session id.' }, { name: 'status', description: 'status observed most recently, used to seed a new entry.' }],
+        returns: 'the registry entry, created on first use.',
+      },
+      {
+        signature: 'async checkStaleness( sessionId: string, onStale: (session: SupervisedSession) => void, now: number, ): Promise<void>',
+        description: 'Check one terminal\'s heartbeat and alert the caller when it went stale.',
+        parameters: [{ name: 'sessionId', description: 'terminal session id.' }, { name: 'onStale', description: 'called with the registry entry when the heartbeat is stale and the cooldown elapsed.' }, { name: 'now', description: 'epoch milliseconds of the watchdog pass.' }],
+      },
+    ],
+  },
+  {
+    key: 'supervisorOps',
+    summary: 'The operations service: the usage ledger, the delivery report store, the chat bridge seam, and the four operations tools.',
+    description: 'The operations service: the usage ledger, the delivery report store, the chat bridge seam, and the four operations tools.',
+    methods: [
+      {
+        signature: 'readonly config: ResolvedOpsConfig',
+        description: 'Resolved configuration.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly ledger: UsageLedger',
+        description: 'Running spend for the current task and the day.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly reports: ReportStore',
+        description: 'Delivery reports, one directory per task.',
+        parameters: [],
+      },
+      {
+        signature: 'useChatTransport( transport: ChatTransport, handler?: (message: ChatMessage, command: { command: ChatCommand; argument: string }) => void, ): () => void',
+        description: 'Register the deployment\'s chat transport. The plugin owns the default routing: an inbound message reaches the agents that own supervised terminals as a steer, so a human can ask for status or redirect the run from the chat. A deployment that needs its own routing passes a handler and takes over that job. This is the documented extension point a chat connector mounts through.',
+        parameters: [{ name: 'transport', description: 'chat provider supplied by the deployment.' }, { name: 'handler', description: 'optional routing override receiving every parsed message.' }],
+        returns: 'the disposer that unsubscribes and forgets the transport.',
+      },
+      {
+        signature: 'recordUsage(entry: UsageEntry): void',
+        description: 'Record one usage observation under the task the supervised terminals are currently on, moving the ledger\'s task window first so the observation is never dropped by the move.',
+        parameters: [{ name: 'entry', description: 'usage to record.' }],
+      },
+      {
+        signature: 'budgetStatus(now: number): BudgetStatus',
+        description: 'Current budget state, read from the ledger.',
+        parameters: [{ name: 'now', description: 'epoch milliseconds the day and the alert thresholds are evaluated against.' }],
+        returns: 'the task and daily spend with their alert and exceeded flags.',
+      },
+    ],
+  },
+  {
+    key: 'supervisorTasks',
+    summary: 'Task plans, checkpoints, and issue tickets for supervised runs: the durable state an interrupted or reviewed run resumes from, stored under the control plane\'s state directory.',
+    description: 'Task plans, checkpoints, and issue tickets for supervised runs: the durable state an interrupted or reviewed run resumes from, stored under the control plane\'s state directory.',
+    methods: [
+      {
+        signature: 'readonly config: ResolvedTaskConfig',
+        description: 'Resolved configuration.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly checkpoints: CheckpointStore',
+        description: 'Checkpoint records, one directory per task.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly tickets: IssueStore',
+        description: 'Issue tickets, one JSON file per ticket.',
+        parameters: [],
+      },
+      {
+        signature: 'readonly git: GitRunner = new GitRunner()',
+        description: 'Git operations the checkpoint tool runs.',
+        parameters: [],
+      },
+    ],
+  },
+  {
     key: 'systemPrompt',
     summary: 'Registry service for the prompt inputs assembled before each model step.',
     description: 'Registry service for the prompt inputs assembled before each model step.',
@@ -4234,6 +4365,10 @@ export const EVENT_API: readonly EventApiEntry[] = [
 /** Shapes of every exported type the Service and Event signatures reference (transitively), sorted by name. */
 export const TYPE_API: readonly TypeApiEntry[] = [
   {
+    name: 'AcceptanceCriterion',
+    declaration: 'export interface AcceptanceCriterion {\n    id: string;\n    description: string;\n    verificationMethod: VerificationMethod;\n    verificationSpec?: Record<string, string>;\n    status: \'pending\' | \'passed\' | \'failed\';\n}',
+  },
+  {
     name: 'AccountDetails',
     declaration: 'export interface AccountDetails {\n    readonly profile: {\n        readonly status: \'ready\';\n        readonly value: AccountProfile;\n    } | {\n        readonly status: \'failed\';\n    };\n    readonly balance: {\n        readonly status: \'ready\';\n        readonly value: readonly AccountWallet[];\n        readonly bonusWallets: readonly AccountWallet[];\n    } | {\n        readonly status: \'failed\';\n    };\n}',
   },
@@ -4280,6 +4415,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AgentHandle',
     declaration: 'export interface AgentHandle {\n    agent: Agent;\n    dispose(): Promise<void>;\n}',
+  },
+  {
+    name: 'AgentKind',
+    declaration: 'export type AgentKind = \'claude-code\' | \'codex\' | \'kimi-code\' | \'qwen-code\' | \'trae\' | \'dsh\';',
   },
   {
     name: 'AgentOptions',
@@ -4498,8 +4637,28 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type BrandedNumber<B extends string> = number & {\n    readonly [BRAND]: B;\n};',
   },
   {
+    name: 'BreakerPolicy',
+    declaration: 'export interface BreakerPolicy {\n    noProgressLimit: number;\n    openLimit: number;\n    cooldownSec: number;\n}',
+  },
+  {
+    name: 'BreakerReport',
+    declaration: 'export type BreakerReport = {\n    state: \'closed\' | \'half-open\';\n    consecutiveNoProgress: number;\n} | {\n    state: \'open\';\n    consecutiveNoProgress: number;\n    openForSec: number;\n};',
+  },
+  {
+    name: 'BreakerState',
+    declaration: 'export type BreakerState = \'closed\' | \'half-open\' | \'open\';',
+  },
+  {
     name: 'BrowserUseProviderName',
     declaration: 'export type BrowserUseProviderName = Branded<\'BrowserUseProviderName\'>;',
+  },
+  {
+    name: 'BudgetPolicy',
+    declaration: 'export interface BudgetPolicy {\n    taskBudgetUSD: number;\n    dailyBudgetUSD: number;\n    alertThresholdPct: number;\n    onExceed: \'downgrade-all\' | \'stop-task\';\n}',
+  },
+  {
+    name: 'BudgetStatus',
+    declaration: 'export interface BudgetStatus {\n    taskUSD: number;\n    dailyUSD: number;\n    alert: boolean;\n    exceeded: boolean;\n    onExceed: BudgetPolicy[\'onExceed\'];\n}',
   },
   {
     name: 'BundleInfo',
@@ -4512,6 +4671,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ChangeResult',
     declaration: 'export interface ChangeResult {\n    changed: boolean;\n    application: \'applied\' | \'restart-required\' | \'overridden\' | \'failed\' | \'cancelled\';\n    stage: \'install\' | \'enable\' | \'remove\';\n    target: string;\n    enabled?: boolean;\n    error?: ManagementError;\n    warnings?: string[];\n    packageResult?: PackageResult;\n    bundle?: string;\n    pendingBuilds?: string[];\n    approvedBuilds?: string[];\n    registries?: Registry[];\n    failedAt?: \'registry\' | \'spec-host\';\n}',
+  },
+  {
+    name: 'ChatCommand',
+    declaration: 'export type ChatCommand = \'run\' | \'status\' | \'stop\' | \'shutdown\' | \'help\' | \'chat\';',
+  },
+  {
+    name: 'ChatMessage',
+    declaration: 'export interface ChatMessage {\n    id: string;\n    chatId: string;\n    senderId: string;\n    text: string;\n    receivedAt: number;\n}',
+  },
+  {
+    name: 'ChatTransport',
+    declaration: 'export interface ChatTransport {\n    send(chatId: string, text: string): Promise<void>;\n    onMessage(handler: (message: ChatMessage) => void): () => void;\n}',
+  },
+  {
+    name: 'CheckpointDraft',
+    declaration: 'export interface CheckpointDraft {\n    taskId: string;\n    stepIndex: number;\n    attempt: number;\n    supervisorSessionId: string;\n    terminalSessionId?: string;\n    gitRef?: SupervisorCheckpoint[\'gitRef\'];\n    outputSpillPath?: string;\n    terminalState?: SupervisorCheckpoint[\'terminalState\'];\n}',
+  },
+  {
+    name: 'CheckpointRetention',
+    declaration: 'export interface CheckpointRetention {\n    maxPerTask: number;\n    maxAgeDays: number;\n}',
+  },
+  {
+    name: 'CheckpointStore',
+    declaration: 'export class CheckpointStore {\n    constructor(private readonly directory: string, private readonly retention: CheckpointRetention);\n    async create(draft: CheckpointDraft, now: number): Promise<{\n        checkpoint: SupervisorCheckpoint;\n        path: string;\n    }>;\n    async read(taskId: string, checkpointId?: string): Promise<SupervisorCheckpoint | undefined>;\n    async list(taskId: string): Promise<SupervisorCheckpoint[]>;\n    async prune(taskId: string, now: number): Promise<string[]>;\n}',
   },
   {
     name: 'ClientArtifactBaseline',
@@ -4806,6 +4989,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type DeepSeekLlmApiJson = null | boolean | number | string | DeepSeekLlmApiJson[] | {\n    [key: string]: DeepSeekLlmApiJson;\n};',
   },
   {
+    name: 'DetectionThresholds',
+    declaration: 'export interface DetectionThresholds {\n    errorStreakThreshold: number;\n    repeatThreshold: number;\n    repeatWindowMin: number;\n    maxRestarts: number;\n    crashWindowMin: number;\n    contextBloatBytes: number;\n    silenceThresholdSec: number;\n}',
+  },
+  {
     name: 'DeveloperMessage',
     declaration: 'export interface DeveloperMessage extends MessageBase {\n    readonly role: \'developer\';\n}',
   },
@@ -4934,6 +5121,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface EpochHeader {\n    config: LlmCallConfig;\n    adapterDefaults?: LlmCallConfigAdapterDefaults;\n    tools?: ToolSchema[];\n    system?: never;\n}',
   },
   {
+    name: 'EstimatedEffort',
+    declaration: 'export type EstimatedEffort = \'small\' | \'medium\' | \'large\';',
+  },
+  {
     name: 'FeedbackCategory',
     declaration: 'export type FeedbackCategory = \'task-result\' | \'instruction-following\' | \'product-interaction\' | \'service-stability\' | \'resource-cost\' | \'security-privacy-permission\' | \'other\';',
   },
@@ -4968,6 +5159,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'FileUploadValue',
     declaration: 'export interface FileUploadValue {\n    readonly receiptId: FileUploadReceiptId;\n    readonly file: FileAttachmentRef;\n}',
+  },
+  {
+    name: 'Finding',
+    declaration: 'export interface Finding {\n    id: string;\n    severity: FindingSeverity;\n    category: FindingCategory;\n    title: string;\n    evidence: string;\n    gap: string;\n    suggestedFix: string;\n    acceptanceCriterionId?: string;\n}',
+  },
+  {
+    name: 'FindingCategory',
+    declaration: 'export type FindingCategory = \'requirement-gap\' | \'test-failure\' | \'code-quality\' | \'security\' | \'computer-use\';',
+  },
+  {
+    name: 'FindingSeverity',
+    declaration: 'export type FindingSeverity = \'blocking\' | \'high\' | \'medium\' | \'low\' | \'nitpick\';',
   },
   {
     name: 'FinishReason',
@@ -5034,6 +5237,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface GenericResultView {\n    card: \'generic\';\n    title?: string;\n    content?: ContentBlock[];\n}',
   },
   {
+    name: 'GitRef',
+    declaration: 'export interface GitRef {\n    repoPath: string;\n    branch: string;\n    commitHash: string;\n    hasUncommitted: boolean;\n}',
+  },
+  {
     name: 'GoalActivation',
     declaration: 'export type GoalActivation = \'armed\' | \'disarmed\';',
   },
@@ -5076,6 +5283,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'GrantRecord',
     declaration: 'export interface GrantRecord {\n    readonly kind: \'grant\';\n    readonly payload: unknown;\n}',
+  },
+  {
+    name: 'Heartbeat',
+    declaration: 'export interface Heartbeat {\n    sessionId: string;\n    lastOutputAt: number;\n    lastWaitReason: string;\n    consecutiveStaleChecks: number;\n}',
+  },
+  {
+    name: 'HeartbeatStore',
+    declaration: 'export class HeartbeatStore {\n    constructor(private readonly directory: string, private readonly timeoutSec: number);\n    async touch(sessionId: string, waitReason: string, now: number): Promise<Heartbeat>;\n    async read(sessionId: string): Promise<Heartbeat | undefined>;\n    async recordCheck(record: Heartbeat, stale: boolean): Promise<Heartbeat>;\n    async list(): Promise<Heartbeat[]>;\n    async remove(sessionId: string): Promise<void>;\n    isStale(record: Heartbeat, now: number): boolean;\n}',
   },
   {
     name: 'HostConnectionFetch',
@@ -5122,6 +5337,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type IndexInjectionPlacement = \'head\' | \'body\';',
   },
   {
+    name: 'InspectionReport',
+    declaration: 'export interface InspectionReport {\n    marks: StateMark[];\n    outputClass: OutputClass;\n    hits: L1RuleHit[];\n    heartbeatStale: boolean;\n    spillPath?: string;\n}',
+  },
+  {
     name: 'InspectOptions',
     declaration: 'export interface InspectOptions {\n    readonly registry?: Registry;\n}',
   },
@@ -5150,6 +5369,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type InstallSpecKind = \'registry\' | \'path\' | \'git\' | \'tarball\';',
   },
   {
+    name: 'IntegrationStrategy',
+    declaration: 'export type IntegrationStrategy = \'sequential-merge\' | \'parallel-merge\' | \'staged\';',
+  },
+  {
     name: 'InvariantFailure',
     declaration: 'export type InvariantFailure = (message: string) => never;',
   },
@@ -5172,6 +5395,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'InvokeRemoteRequest',
     declaration: 'export interface InvokeRemoteRequest {\n    readonly namespace: string;\n    readonly method: string;\n    readonly args: Readonly<Record<string, unknown>>;\n    readonly uplink?: AsyncIterable<unknown>;\n    readonly peer?: PeerScope;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'IssueStore',
+    declaration: 'export class IssueStore {\n    constructor(private readonly directory: string);\n    get path(): string;\n    async create(ticket: IssueTicket): Promise<{\n        ticket: IssueTicket;\n        path: string;\n    }>;\n    async write(ticket: IssueTicket): Promise<string>;\n    async read(taskId: string, ticketId?: string): Promise<IssueTicket | undefined>;\n    async list(taskId: string): Promise<IssueTicket[]>;\n}',
+  },
+  {
+    name: 'IssueTicket',
+    declaration: 'export interface IssueTicket {\n    ticketId: string;\n    taskId: string;\n    findings: Finding[];\n    redoInstructions: string;\n    regressionScope: string[];\n    retryCount: number;\n    maxRetries: number;\n    status: TicketStatus;\n    createdAt: number;\n    updatedAt: number;\n}',
   },
   {
     name: 'JobAppendOptions',
@@ -5312,6 +5543,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'KvUnitDescriptor',
     declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly compatibleVersions?: readonly number[];\n}',
+  },
+  {
+    name: 'L1RuleHit',
+    declaration: 'export interface L1RuleHit {\n    ruleId: string;\n    severity: L1Severity;\n    evidence: string;\n    timestamp: number;\n}',
+  },
+  {
+    name: 'L1Severity',
+    declaration: 'export type L1Severity = \'low\' | \'medium\' | \'high\' | \'critical\';',
   },
   {
     name: 'LlmAdapter',
@@ -5558,6 +5797,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ModelModalityMap {\n    text: \'text\';\n    image: \'image\';\n}',
   },
   {
+    name: 'ModelPrice',
+    declaration: 'export interface ModelPrice {\n    model: string;\n    usdPerMillionTokens: number;\n}',
+  },
+  {
     name: 'ModelProviderGroup',
     declaration: 'export interface ModelProviderGroup {\n    readonly id: string;\n    readonly name: string;\n    readonly models: readonly ModelCatalogModel[];\n}',
   },
@@ -5576,6 +5819,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ObjectJsonSchema',
     declaration: 'export type ObjectJsonSchema = JsonSchemaNode & {\n    type: \'object\';\n};',
+  },
+  {
+    name: 'Observation',
+    declaration: 'export interface Observation {\n    at: number;\n    text: string;\n    failed: boolean;\n    exitCode?: number | null;\n}',
   },
   {
     name: 'OfficeExtension',
@@ -5614,6 +5861,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type OptionalSessionSeq = SessionSeq | null;',
   },
   {
+    name: 'OutputClass',
+    declaration: 'export type OutputClass = \'waiting-input\' | \'working\' | \'error\' | \'completed\' | \'unknown\';',
+  },
+  {
     name: 'PackageResult',
     declaration: 'export interface PackageResult {\n    exitCode: number;\n    output: string;\n    truncated: boolean;\n    logPath: string;\n    kind?: PluginInstallFailureKind;\n    timedOut?: boolean;\n    incompatible?: IncompatiblePlugin[];\n}',
   },
@@ -5632,6 +5883,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PermissionCatalog',
     declaration: 'export interface PermissionCatalog {\n    options: PresetOption[];\n    defaultOptions: PresetOption[];\n    defaultPreset: string;\n}',
+  },
+  {
+    name: 'PlanStore',
+    declaration: 'export class PlanStore {\n    constructor(private readonly directory: string);\n    async write(plan: TaskPlan): Promise<string>;\n    async read(taskId: string): Promise<TaskPlan | undefined>;\n    async list(): Promise<TaskPlan[]>;\n}',
   },
   {
     name: 'PlatformSession',
@@ -5752,6 +6007,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ProfilePnpmInvocation',
     declaration: 'export interface ProfilePnpmInvocation {\n    readonly command: string;\n    readonly args: readonly string[];\n    readonly env: Readonly<Record<string, string>>;\n}',
+  },
+  {
+    name: 'ProgressBreaker',
+    declaration: 'export class ProgressBreaker {\n    constructor(private readonly policy: BreakerPolicy);\n    observe(progress: boolean, now: number): BreakerState;\n    report(now: number): BreakerReport;\n}',
   },
   {
     name: 'ProjectionChangeListener',
@@ -5910,6 +6169,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ReplayEnvelope {\n    response: unknown;\n    blocks?: readonly unknown[];\n}',
   },
   {
+    name: 'ReportStore',
+    declaration: 'export class ReportStore {\n    constructor(private readonly directory: string);\n    async write(taskId: string, markdown: string): Promise<string>;\n}',
+  },
+  {
     name: 'RequestContext',
     declaration: 'export interface RequestContext {\n    provider: string;\n    model: string;\n    contextWindow?: number;\n    systemPromptUpdate?: SystemPromptUpdate;\n}',
   },
@@ -5950,6 +6213,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ResolvedNormalRetryPolicy extends ResolvedRetryBackoff {\n    readonly mode: \'normal\';\n    readonly maxRetries: number;\n    readonly retryableCodes: readonly string[];\n}',
   },
   {
+    name: 'ResolvedOpsConfig',
+    declaration: 'export interface ResolvedOpsConfig {\n    stateDir: string;\n    budget: BudgetPolicy;\n    modelPrices: ModelPrice[];\n    shutdown: ShutdownPolicy;\n}',
+  },
+  {
     name: 'ResolvedRetryBackoff',
     declaration: 'export interface ResolvedRetryBackoff {\n    readonly initialDelayMs: number;\n    readonly maxDelayMs: number;\n    readonly jitterRatio: number;\n}',
   },
@@ -5958,8 +6225,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ResolvedRetryPolicy = ResolvedNormalRetryPolicy | ResolvedAlwaysRetryPolicy;',
   },
   {
+    name: 'ResolvedRule',
+    declaration: 'export interface ResolvedRule extends RuleDefinition {\n    enabled: boolean;\n}',
+  },
+  {
     name: 'ResolvedSubagentStartRequest',
     declaration: 'export interface ResolvedSubagentStartRequest extends SubagentStartRequest {\n    readonly descriptor: SubagentDescriptorData;\n}',
+  },
+  {
+    name: 'ResolvedTaskConfig',
+    declaration: 'export interface ResolvedTaskConfig {\n    stateDir: string;\n    checkpointRetention: CheckpointRetention;\n    checkpointBranchPrefix: string;\n    maxRetriesPerIssue: number;\n}',
   },
   {
     name: 'RestoredSessionOptions',
@@ -5972,6 +6247,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'RpcId',
     declaration: 'export type RpcId = Branded<\'rpc-id\'>;',
+  },
+  {
+    name: 'RuleDefinition',
+    declaration: 'export interface RuleDefinition {\n    id: string;\n    severity: L1Severity;\n    kind: RuleKind;\n    pattern?: RegExp;\n    keywords?: readonly string[];\n}',
+  },
+  {
+    name: 'RuleKind',
+    declaration: 'export type RuleKind = \'pattern\' | \'keywords\' | \'repeat-output\' | \'error-streak\' | \'crash-loop\' | \'output-size\';',
   },
   {
     name: 'RunnerFailureRule',
@@ -6570,6 +6853,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionUpdateQueueValue {\n    readonly accepted: true;\n}',
   },
   {
+    name: 'SessionWindows',
+    declaration: 'export class SessionWindows {\n    observe(observation: Observation, thresholds: DetectionThresholds, rules: readonly ResolvedRule[]): WindowHit[];\n}',
+  },
+  {
     name: 'SessionWireEvent',
     declaration: 'export interface SessionWireEvent {\n    readonly type: string;\n    readonly seq: number;\n    readonly time: number;\n    readonly data: JsonValue;\n    readonly ignorable?: true;\n    readonly sourceEventSeqs?: JsonValue;\n    readonly surfaceOp?: JsonValue;\n}',
   },
@@ -6618,6 +6905,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SettingsSecretView {\n    path: string[];\n    set: boolean;\n}',
   },
   {
+    name: 'SettlementReport',
+    declaration: 'export interface SettlementReport {\n    marks: StateMark[];\n    breaker: BreakerReport;\n    outputClass: OutputClass;\n    hits: L1RuleHit[];\n    windowHits: WindowHit[];\n    heartbeatStale: boolean;\n    spillPath?: string;\n    spillCapped: boolean;\n    limitResumeAt?: number;\n}',
+  },
+  {
     name: 'ShellExecRequest',
     declaration: 'export interface ShellExecRequest {\n    command: string;\n    workdir?: string | undefined;\n    timeoutMs?: number | undefined;\n    onExpiry?: ShellExpiryPolicy | undefined;\n    stdoutMaxBytes?: number | undefined;\n    signal?: AbortSignal | undefined;\n    stdin?: string | undefined;\n    env?: Record<string, string> | undefined;\n    dshEnv?: DshEnvironment | undefined;\n    sandboxPolicy?: SandboxExecutionPolicy | undefined;\n}',
   },
@@ -6656,6 +6947,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ShellSandboxInfo',
     declaration: 'export interface ShellSandboxInfo {\n    mode: SandboxMode;\n    denied: boolean;\n    enforcement?: SandboxEnforcement;\n    runnerFailed?: boolean;\n}',
+  },
+  {
+    name: 'ShutdownPolicy',
+    declaration: 'export interface ShutdownPolicy {\n    enabled: boolean;\n    command: string;\n    gracePeriodMin: number;\n}',
   },
   {
     name: 'SignInAttemptId',
@@ -6814,8 +7109,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SpeechSpec extends SpeechInput {\n    readonly provider: SpeechProvider;\n}',
   },
   {
+    name: 'SpillAppendResult',
+    declaration: 'export interface SpillAppendResult {\n    path: string;\n    written: boolean;\n    capped: boolean;\n}',
+  },
+  {
     name: 'SpillLocator',
     declaration: 'export type SpillLocator = Branded<\'SpillLocator\'>;',
+  },
+  {
+    name: 'SpillLog',
+    declaration: 'export class SpillLog {\n    constructor(private readonly root: string, private readonly enabled: boolean, private readonly maxBytes: number);\n    pathFor(sessionId: string, taskId?: string): string;\n    async append(sessionId: string, taskId: string | undefined, text: string): Promise<SpillAppendResult>;\n    async readTail(path: string, maxBytes: number): Promise<string | undefined>;\n}',
   },
   {
     name: 'SpillOwner',
@@ -6832,6 +7135,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SshStreamEndpoint',
     declaration: 'export type SshStreamEndpoint = z.infer<typeof streamEndpointSchema>;',
+  },
+  {
+    name: 'StateMark',
+    declaration: 'export type StateMark = \'prompt-idle\' | \'waiting-input\' | \'working\' | \'silence\' | \'exit-ok\' | \'exit-bad\' | \'heartbeat-stale\';',
   },
   {
     name: 'StorageBackend',
@@ -7002,6 +7309,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SubprocessTerminalSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    env?: Record<string, string> | undefined;\n    rows: number;\n    cols: number;\n    terminalType: string;\n    shellActivity?: boolean | undefined;\n    graceMs: number;\n    signal?: AbortSignal | undefined;\n}',
   },
   {
+    name: 'SubTask',
+    declaration: 'export interface SubTask {\n    id: string;\n    title: string;\n    description: string;\n    dependsOn: string[];\n    requiredSkills: string[];\n    preferredAgent?: AgentKind;\n    estimatedEffort: EstimatedEffort;\n    acceptanceCriteria: string[];\n    status: SubTaskStatus;\n}',
+  },
+  {
+    name: 'SubTaskStatus',
+    declaration: 'export type SubTaskStatus = \'pending\' | \'in-progress\' | \'completed\' | \'failed\' | \'skipped\';',
+  },
+  {
+    name: 'SupervisedSession',
+    declaration: 'export interface SupervisedSession {\n    sessionId: TerminalSessionId;\n    owner: Agent;\n    name?: string;\n    agentKind?: AgentKind;\n    taskId?: string;\n    lastLaunchCommand?: string;\n    lastModel?: string;\n    lastWaitReason: TerminalWaitReason;\n    lastOutputAt: number;\n    lastStatus: TerminalSessionStatus;\n    spillPath?: string;\n    lastAlertAt?: number;\n    readonly windows: SessionWindows;\n    readonly breaker: ProgressBreaker;\n    limitResumeAt?: number | undefined;\n    previousObservation?: string;\n}',
+  },
+  {
+    name: 'SupervisorCheckpoint',
+    declaration: 'export interface SupervisorCheckpoint {\n    schemaVersion: number;\n    checkpointId: string;\n    taskId: string;\n    stepIndex: number;\n    timestamp: number;\n    attempt: number;\n    gitRef?: GitRef;\n    supervisorSessionId: string;\n    terminalSessionId?: string;\n    outputSpillPath?: string;\n    terminalState?: TerminalStateRecord;\n}',
+  },
+  {
     name: 'SurfaceEvent',
     declaration: 'export type SurfaceEvent = SessionEvent<SurfaceEventType>;',
   },
@@ -7040,6 +7363,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TableValueOf',
     declaration: 'export type TableValueOf<S extends DomainSpec, N extends keyof S[\'tables\']> = S[\'tables\'][N] extends DomainTableSpec<string, infer V> ? V : never;',
+  },
+  {
+    name: 'TaskPlan',
+    declaration: 'export interface TaskPlan {\n    taskId: string;\n    goal: string;\n    constraints: string[];\n    acceptanceCriteria: AcceptanceCriterion[];\n    subTasks: SubTask[];\n    integrationStrategy: IntegrationStrategy;\n    createdAt: number;\n    updatedAt: number;\n}',
   },
   {
     name: 'TeamId',
@@ -7178,8 +7505,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TerminalSpawnResult extends TerminalSessionSnapshot {\n    motd: string;\n}',
   },
   {
+    name: 'TerminalStateRecord',
+    declaration: 'export interface TerminalStateRecord {\n    agentKind: AgentKind;\n    lastLaunchCommand: string;\n    lastModel?: string;\n    state: string;\n    pendingInput?: string;\n}',
+  },
+  {
     name: 'TerminalWaitReason',
     declaration: 'export type TerminalWaitReason = \'stdin_read\' | \'inferred_idle\' | \'timeout\' | \'session_exit\';',
+  },
+  {
+    name: 'TicketStatus',
+    declaration: 'export type TicketStatus = \'open\' | \'in-redo\' | \'in-regression\' | \'resolved\' | \'escalated\';',
   },
   {
     name: 'TokenMeasurement',
@@ -7446,8 +7781,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface UpdateTeamTaskRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly action: TeamTaskAction;\n    readonly subject?: string;\n    readonly description?: string;\n    readonly blockedBy?: readonly TeamTaskId[];\n    readonly writeScopes?: readonly string[];\n    readonly owner?: string;\n}',
   },
   {
+    name: 'UsageEntry',
+    declaration: 'export interface UsageEntry {\n    at: number;\n    model?: string;\n    tokens: number;\n    costUSD?: number;\n}',
+  },
+  {
+    name: 'UsageLedger',
+    declaration: 'export class UsageLedger {\n    constructor(private readonly policy: BudgetPolicy, private readonly prices: readonly ModelPrice[]);\n    record(entry: UsageEntry): void;\n    status(now: number): BudgetStatus;\n    resetTask(): void;\n    get entries(): readonly UsageEntry[];\n}',
+  },
+  {
     name: 'UserMessage',
     declaration: 'export interface UserMessage extends MessageBase {\n    readonly role: \'user\';\n}',
+  },
+  {
+    name: 'VerificationMethod',
+    declaration: 'export type VerificationMethod = \'test-command\' | \'file-exists\' | \'output-contains\' | \'manual\' | \'llm-judge\';',
   },
   {
     name: 'VerifiedWebhookDelivery',
@@ -7568,6 +7915,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WebUpgradeRoute',
     declaration: 'export interface WebUpgradeRoute {\n    path: string;\n    handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void | Promise<void>;\n}',
+  },
+  {
+    name: 'WindowHit',
+    declaration: 'export interface WindowHit extends L1RuleHit {\n    convergence?: \'identical\' | \'changing\';\n}',
   },
   {
     name: 'WorkflowAgentEndInfo',

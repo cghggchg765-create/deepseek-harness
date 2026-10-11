@@ -52,6 +52,7 @@ harness 由 `packages/` 下的 npm 包组装而成，按能力系列分组：会
 | [`context/`](context/README.zh.md) | 模型可见请求上下文：workspace 指令、时间上下文、引用 |
 | [`subagent/`](subagent/README.zh.md) | subagent 能力系列：提供方注册表约定和面向模型的委托工具 |
 | [`jobs/`](jobs/README.zh.md) | 通用后台任务运行时和面向模型的作业控制工具 |
+| [`supervisor/`](supervisor/README.zh.md) | 受管终端 bundle：六个可开关组件，托管 CLI agent 并保存持久计划与断点 |
 | [`experimental/`](experimental/README.zh.md) | 预稳定原型，包含显式私有例外 |
 | [`workflow/`](workflow/README.zh.md) | 工作流 seam、PTC 进程引擎、面向模型的 `workflow`／`ralph` 工具 |
 | [`webhook/`](webhook/README.zh.md) | 已验证外部事件、受信规则与即发即弃 Workspace 会话 |

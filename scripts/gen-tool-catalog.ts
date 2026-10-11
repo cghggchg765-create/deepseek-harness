@@ -52,6 +52,10 @@ import * as ToolFsSearch from '@deepseek-ai/dsh-tool-fs-search'
 import * as ToolStrReplaceEditor from '@deepseek-ai/dsh-tool-str-replace-editor'
 import TerminalSessionService from '@deepseek-ai/dsh-terminal'
 import * as ToolPty from '@deepseek-ai/dsh-tool-terminal'
+import SupervisorCore from '@deepseek-ai/dsh-supervisor-core'
+import SupervisorTasks from '@deepseek-ai/dsh-supervisor-tasks'
+import * as SupervisorOrchestration from '@deepseek-ai/dsh-supervisor-orchestration'
+import SupervisorOps from '@deepseek-ai/dsh-supervisor-ops'
 import * as ToolGoal from '@deepseek-ai/dsh-tool-goal'
 import * as ToolSchedule from '@deepseek-ai/dsh-schedule'
 import Lsp from '@deepseek-ai/dsh-lsp'
@@ -445,6 +449,63 @@ const TOOL_PACKAGES: ToolPackage[] = [
     },
     note:
       'create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-supervisor-core',
+    dir: 'supervisor-core',
+    source: 'packages/supervisor/supervisor-core/src/tools.ts',
+    requires: ['ctx.tools', 'ctx.terminals', 'an owning Agent (exec.agent) for every call'],
+    writes: ['tool/call', 'tool/result', 'files under the configured state directory'],
+    async mount(ctx) {
+      await ctx.plugin(TerminalSessionService)
+      await ctx.plugin(SupervisorCore, { watchdogEnabled: false })
+    },
+    note:
+      'The catalog boots the component with its watchdog disabled: the watchdog wakes an idle Agent on a stale terminal, which a schema harvest must not do. Every tool drives an existing terminal session; no supervisor component ever opens one, so `terminal_open` stays the only session creator. The other three components mount on top of this row and register the remaining twelve supervisor tools.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-supervisor-tasks',
+    dir: 'supervisor-tasks',
+    source: 'packages/supervisor/supervisor-tasks/src/tools.ts',
+    requires: ['ctx.tools', 'ctx.supervisor', 'an owning Agent (exec.agent) for every call'],
+    writes: ['tool/call', 'tool/result', 'git commits and branches on checkpoint calls', 'files under the configured state directory'],
+    async mount(ctx) {
+      await ctx.plugin(TerminalSessionService)
+      await ctx.plugin(SupervisorCore, { watchdogEnabled: false })
+      await ctx.plugin(SupervisorTasks)
+    },
+    note:
+      'Planning and durable task state: plan authoring, checkpoints, and review tickets. The component reads the supervised sessions and the plan store from `ctx.supervisor`, and reads every shared path from that service rather than declaring one of its own.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-supervisor-orchestration',
+    dir: 'supervisor-orchestration',
+    source: 'packages/supervisor/supervisor-orchestration/src/tools.ts',
+    requires: ['ctx.tools', 'ctx.terminals', 'ctx.supervisor', 'ctx.supervisorTasks', 'an owning Agent (exec.agent) for every call'],
+    writes: ['tool/call', 'tool/result', 'git worktrees and branches', 'files under the configured state directory'],
+    async mount(ctx) {
+      await ctx.plugin(TerminalSessionService)
+      await ctx.plugin(SupervisorCore, { watchdogEnabled: false })
+      await ctx.plugin(SupervisorTasks)
+      await ctx.plugin(SupervisorOrchestration)
+    },
+    note:
+      'Skill inventories, phase-based model switching, worktrees, and dispatch. The worktree manager takes its git runner from `ctx.supervisorTasks` and its base directory from `ctx.supervisor`, so one state layout stays authoritative.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-supervisor-ops',
+    dir: 'supervisor-ops',
+    source: 'packages/supervisor/supervisor-ops/src/tools.ts',
+    requires: ['ctx.tools', 'ctx.supervisor', 'ctx.supervisorTasks', 'an owning Agent (exec.agent) for every call'],
+    writes: ['tool/call', 'tool/result', 'files under the configured state directory'],
+    async mount(ctx) {
+      await ctx.plugin(TerminalSessionService)
+      await ctx.plugin(SupervisorCore, { watchdogEnabled: false })
+      await ctx.plugin(SupervisorTasks)
+      await ctx.plugin(SupervisorOps)
+    },
+    note:
+      'Budget, delivery reports, chat notifications, and the shutdown gate. The chat transport is a deployment seam: `ctx.supervisorOps.useChatTransport` registers a provider and owns the inbound routing, and with none registered `supervisor_notify` reports that no transport exists.',
   },
   {
     pkg: '@deepseek-ai/dsh-schedule',

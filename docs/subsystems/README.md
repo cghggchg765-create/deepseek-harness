@@ -36,6 +36,7 @@ One page per subsystem of the DeepSeek Harness: what it is, the data structures 
 | [subprocess.md](subprocess.md) | the subprocess seam: fully-explicit `SubprocessSpawnSpec`, offset-based output readers, unclassified `SubprocessOutcome`, and the managed `DSH_*` environment vocabulary |
 | [ssh.md](ssh.md) | the POSIX SSH connection and remote filesystem, subprocess and sandbox providers |
 | [terminal.md](terminal.md) | persistent terminal ids, backend/session contracts, send readiness, bounded reads, and owner-visible snapshots |
+| [supervisor.md](supervisor.md) | supervised-terminal vocabulary: state marks, L1 rule hits, plan subtasks, and the git and terminal facts a checkpoint pins |
 | [sandbox.md](sandbox.md) | per-session policy resolution and the process-confinement seam: file-effect modes, execution/provider policies, `ConfinedArgv`, enforcement and fail-closed errors |
 | [ptc-runtime.md](ptc-runtime.md) | the PTC execution seam: `PtcRunRequest`/`Result`, binding namespaces, captured logs, the `PtcRunFailure` taxonomy |
 | [computer-use.md](computer-use.md) | exclusive named computer-use provider registration and Cua Driver integration choices |

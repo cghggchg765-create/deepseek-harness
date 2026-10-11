@@ -32,6 +32,10 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-fs-search` | `glob`, `grep` | `ctx.tools`, `ctx.subprocess`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | glob and grep are unconditional discovery tools that spawn the packaged ripgrep binary (`@vscode/ripgrep`) through ctx.subprocess as ordinary foreground calls (never background jobs) — no host `rg` install and no shell layer. The catalog uses `sampleOverCapGlobResults: true`; deployments must choose that behavior explicitly. Capped results save the complete formatted list through the optional ctx.spillStore backend; returned locators are follow-up-readable/searchable when the backend exposes local paths in co-located deployments. |
 | `@deepseek-ai/dsh-tool-terminal` | `terminal_close`, `terminal_list`, `terminal_open`, `terminal_read`, `terminal_send`, `terminal_signal` | `ctx.tools`, `ctx.terminals`, `ctx.systemPrompt`, `ctx.jobs at call time for run_in_background` | `tool/call`, `tool/result` | - | The six terminal tools are opt-in and complement one-shot shell/filesystem tools. `terminal_send(run_in_background: true)` registers with `ctx.jobs`; TUI, named key sequences, BEL, resize, auto-start, and cross-agent sharing are absent from the schema. |
 | `@deepseek-ai/dsh-tool-goal` | `create_goal`, `get_goal`, `update_goal` | `ctx.tools`, `ctx.agents`, `ctx.goals`, `ctx.systemPrompt`, `a calling Agent in an authorized open turn` | `tool/call`, `goal/change for mutations`, `tool/result` | - | create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds. |
+| `@deepseek-ai/dsh-supervisor-core` | `supervisor_agent_launch`, `supervisor_status`, `supervisor_terminal_read`, `supervisor_terminal_run`, `supervisor_terminal_send`, `supervisor_terminal_signal` | `ctx.tools`, `ctx.terminals`, `an owning Agent (exec.agent) for every call` | `tool/call`, `tool/result`, `files under the configured state directory` | - | The catalog boots the component with its watchdog disabled: the watchdog wakes an idle Agent on a stale terminal, which a schema harvest must not do. Every tool drives an existing terminal session; no supervisor component ever opens one, so `terminal_open` stays the only session creator. The other three components mount on top of this row and register the remaining twelve supervisor tools. |
+| `@deepseek-ai/dsh-supervisor-tasks` | `supervisor_agent_launch`, `supervisor_checkpoint`, `supervisor_issue`, `supervisor_plan`, `supervisor_review`, `supervisor_status`, `supervisor_terminal_read`, `supervisor_terminal_run`, `supervisor_terminal_send`, `supervisor_terminal_signal` | `ctx.tools`, `ctx.supervisor`, `an owning Agent (exec.agent) for every call` | `tool/call`, `tool/result`, `git commits and branches on checkpoint calls`, `files under the configured state directory` | - | Planning and durable task state: plan authoring, checkpoints, and review tickets. The component reads the supervised sessions and the plan store from `ctx.supervisor`, and reads every shared path from that service rather than declaring one of its own. |
+| `@deepseek-ai/dsh-supervisor-orchestration` | `supervisor_agent_launch`, `supervisor_agent_switch`, `supervisor_checkpoint`, `supervisor_dispatch`, `supervisor_issue`, `supervisor_plan`, `supervisor_review`, `supervisor_skills`, `supervisor_status`, `supervisor_terminal_read`, `supervisor_terminal_run`, `supervisor_terminal_send`, `supervisor_terminal_signal`, `supervisor_worktree` | `ctx.tools`, `ctx.terminals`, `ctx.supervisor`, `ctx.supervisorTasks`, `an owning Agent (exec.agent) for every call` | `tool/call`, `tool/result`, `git worktrees and branches`, `files under the configured state directory` | - | Skill inventories, phase-based model switching, worktrees, and dispatch. The worktree manager takes its git runner from `ctx.supervisorTasks` and its base directory from `ctx.supervisor`, so one state layout stays authoritative. |
+| `@deepseek-ai/dsh-supervisor-ops` | `supervisor_agent_launch`, `supervisor_budget`, `supervisor_checkpoint`, `supervisor_issue`, `supervisor_notify`, `supervisor_plan`, `supervisor_report`, `supervisor_review`, `supervisor_shutdown`, `supervisor_status`, `supervisor_terminal_read`, `supervisor_terminal_run`, `supervisor_terminal_send`, `supervisor_terminal_signal` | `ctx.tools`, `ctx.supervisor`, `ctx.supervisorTasks`, `an owning Agent (exec.agent) for every call` | `tool/call`, `tool/result`, `files under the configured state directory` | - | Budget, delivery reports, chat notifications, and the shutdown gate. The chat transport is a deployment seam: `ctx.supervisorOps.useChatTransport` registers a provider and owns the inbound routing, and with none registered `supervisor_notify` reports that no transport exists. |
 | `@deepseek-ai/dsh-schedule` | `schedule_create`, `schedule_delete`, `schedule_list` | `ctx.tools`, `ctx.sessions`, `Session persistence`, `a future live root Agent` | `tool/call`, `schedule/change create or delete`, `tool/result` | - | Registered only inside live root Agent scopes created after the opt-in Schedule plugin loads. Version 1 accepts after_seconds, explicit absolute at, and bounded fixed-rate every_seconds, and discloses session-local delivery; management reads and mutations require the shared Session persistence barrier. |
 | `@deepseek-ai/dsh-tool-lsp` | `lsp` | `ctx.tools`, `ctx.lsp`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | The lsp tool keeps provider selection and language-server subprocesses behind ctx.lsp, so its model-visible schema stays stable across providers. Requires a registered provider (e.g. `@deepseek-ai/dsh-lsp-stdio`) at runtime; without one, a query returns the structured `LSP_UNAVAILABLE` error rather than changing the schema. |
 | `@deepseek-ai/dsh-tool-ralph` | `ralph` | `ctx.tools`, `ctx.workflowEngine`, `ctx.subagents`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents every fresh round)` | `tool/call`, `tool/result`, `workflow and child session events during execution` | - | A fixed foreground workflow starts one fresh structured child per round; the model selects only the immutable objective and an optional round cap. |
@@ -1375,6 +1379,2483 @@ Update the exact current goal revision. edit, pause, and resume require a direct
 Source: [`packages/goal/tool-goal/src/index.ts`](../packages/goal/tool-goal/src/index.ts)
 
 create, edit, pause, and resume require direct-human root authority; complete and blocked also accept the exact current goal round. The default blocked lower bound is three admitted rounds.
+
+<a id="deepseek-aidsh-supervisor-core"></a>
+
+## `@deepseek-ai/dsh-supervisor-core`
+
+### `supervisor_agent_launch`
+
+Launch a managed CLI agent (Claude Code, Codex, dsh, ...) inside an existing terminal session and hand it the task prompt. Open the terminal first with terminal_open, then call this. Returns the settlement output plus deterministic state marks and L1 rule hits.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id returned by terminal_open."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Which CLI agent to launch.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Task prompt handed to the managed agent."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model substituted into the launch template."
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task this terminal works on; scopes the spill log."
+    },
+    "extraArgs": {
+      "type": "array",
+      "description": "Extra argv appended to the launch command.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "sessionId",
+    "agentKind",
+    "prompt"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-core/src/tools.ts`](../packages/supervisor/supervisor-core/src/tools.ts)
+
+### `supervisor_status`
+
+Report every terminal this supervisor is watching: heartbeat age, staleness, last observed status, and the tasks with their subtask progress. Check this before deciding to intervene.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Restrict the report to one terminal session."
+    }
+  }
+}
+```
+
+Source: [`packages/supervisor/supervisor-core/src/tools.ts`](../packages/supervisor/supervisor-core/src/tools.ts)
+
+### `supervisor_terminal_read`
+
+Read retained scrollback from a supervised terminal without sending anything, and scan it for L1 rule hits. A read observes text that was already produced, so it does not advance the heartbeat or append to the output log.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Offset from the newest retained line; defaults to 0."
+    },
+    "count": {
+      "type": "integer",
+      "description": "Requested line count; the backend may cap it."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal; remembered for later classifications.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-core/src/tools.ts`](../packages/supervisor/supervisor-core/src/tools.ts)
+
+### `supervisor_terminal_run`
+
+Send one shell command to a supervised terminal and wait until that command finishes, detected by a unique marker it echoes afterwards. Use it when the next step depends on the command having completed; supervisor_terminal_send only waits for the next quiet settlement and cannot tell a finished command from a paused one.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "command": {
+      "type": "string",
+      "description": "Shell command to run; it is wrapped, not altered."
+    },
+    "timeoutSec": {
+      "type": "integer",
+      "description": "Seconds to wait for the marker; defaults to the configured run timeout."
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task this run belongs to; scopes the spill log."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId",
+    "command"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-core/src/tools.ts`](../packages/supervisor/supervisor-core/src/tools.ts)
+
+### `supervisor_terminal_send`
+
+Send text to a supervised terminal and wait for the next settlement. Use it to answer prompts, send /model switches, or inject follow-up instructions. Returns the output, why the wait returned, deterministic state marks, and L1 rule hits.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "text": {
+      "type": "string",
+      "description": "Text to send; include the full command, e.g. \"/model sonnet\"."
+    },
+    "submit": {
+      "type": "boolean",
+      "description": "Press Enter after the text; defaults to true."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal; remembered for later classifications.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId",
+    "text"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-core/src/tools.ts`](../packages/supervisor/supervisor-core/src/tools.ts)
+
+### `supervisor_terminal_signal`
+
+Send a signal to a supervised terminal, optionally closing it afterwards. Use SIGINT to interrupt a runaway agent before retrying with new instructions.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "signal": {
+      "type": "string",
+      "description": "Signal to deliver.",
+      "enum": [
+        "SIGINT",
+        "SIGTERM",
+        "SIGKILL",
+        "SIGTSTP",
+        "SIGHUP"
+      ]
+    },
+    "close": {
+      "type": "boolean",
+      "description": "Close the terminal after signalling; defaults to false."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the signal is being sent; recorded with the heartbeat."
+    }
+  },
+  "required": [
+    "sessionId",
+    "signal"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-core/src/tools.ts`](../packages/supervisor/supervisor-core/src/tools.ts)
+
+The catalog boots the component with its watchdog disabled: the watchdog wakes an idle Agent on a stale terminal, which a schema harvest must not do. Every tool drives an existing terminal session; no supervisor component ever opens one, so `terminal_open` stays the only session creator. The other three components mount on top of this row and register the remaining twelve supervisor tools.
+
+<a id="deepseek-aidsh-supervisor-tasks"></a>
+
+## `@deepseek-ai/dsh-supervisor-tasks`
+
+### `supervisor_agent_launch`
+
+Launch a managed CLI agent (Claude Code, Codex, dsh, ...) inside an existing terminal session and hand it the task prompt. Open the terminal first with terminal_open, then call this. Returns the settlement output plus deterministic state marks and L1 rule hits.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id returned by terminal_open."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Which CLI agent to launch.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Task prompt handed to the managed agent."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model substituted into the launch template."
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task this terminal works on; scopes the spill log."
+    },
+    "extraArgs": {
+      "type": "array",
+      "description": "Extra argv appended to the launch command.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "sessionId",
+    "agentKind",
+    "prompt"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_checkpoint`
+
+Create, list, or restore a task checkpoint. A checkpoint pins the git commit, the terminal state, and the output log so a crashed or aborted run can resume. Take one at every step boundary and before any risky action.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "create",
+        "list",
+        "restore"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the checkpoint belongs to."
+    },
+    "stepIndex": {
+      "type": "integer",
+      "description": "Plan step index; defaults to 0."
+    },
+    "attempt": {
+      "type": "integer",
+      "description": "1-based attempt number; defaults to 1."
+    },
+    "note": {
+      "type": "string",
+      "description": "Free-form note stored in the checkpoint commit message."
+    },
+    "terminalSessionId": {
+      "type": "string",
+      "description": "Supervised terminal this checkpoint refers to."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Directory whose repository is snapshotted; defaults to the workspace directory."
+    },
+    "checkpointId": {
+      "type": "string",
+      "description": "Checkpoint to restore; defaults to the newest for the task."
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_issue`
+
+Record a review round as an issue ticket and walk it through repair: open it with the findings, then mark each repair attempt and each regression result. The ticket escalates by itself once the repair budget runs out, and the redo brief is what you send back to the responsible agent.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "open",
+        "list",
+        "read",
+        "redo",
+        "regression-passed",
+        "regression-failed"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the findings belong to."
+    },
+    "ticketId": {
+      "type": "string",
+      "description": "Ticket to act on; defaults to the newest for the task."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Findings for `open`.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "high",
+              "medium",
+              "low",
+              "nitpick"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "requirement-gap",
+              "test-failure",
+              "code-quality",
+              "security",
+              "computer-use"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "gap": {
+            "type": "string"
+          },
+          "suggestedFix": {
+            "type": "string"
+          },
+          "acceptanceCriterionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "title",
+          "evidence",
+          "gap",
+          "suggestedFix"
+        ]
+      }
+    },
+    "regressionScope": {
+      "type": "array",
+      "description": "Checks the repair must re-run.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "redoInstructions": {
+      "type": "string",
+      "description": "Instructions handed to the responsible agent."
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_plan`
+
+Persist, read, or update the plan for a task. Write the plan once after decomposing the goal into independently verifiable subtasks, then update subtask statuses as they complete. The plan is what the checkpoint restore and the delivery report read back.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "write",
+        "read",
+        "set-status"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the plan belongs to."
+    },
+    "goal": {
+      "type": "string",
+      "description": "Task goal; required for write."
+    },
+    "constraints": {
+      "type": "array",
+      "description": "Constraints the hosted agents must respect.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "integrationStrategy": {
+      "type": "string",
+      "description": "How subtask work is merged.",
+      "enum": [
+        "sequential-merge",
+        "parallel-merge",
+        "staged"
+      ]
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "description": "Task-level acceptance criteria.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "verificationMethod": {
+            "type": "string",
+            "enum": [
+              "test-command",
+              "file-exists",
+              "output-contains",
+              "manual",
+              "llm-judge"
+            ]
+          },
+          "verificationSpec": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {}
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "passed",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "verificationMethod"
+        ]
+      }
+    },
+    "subTasks": {
+      "type": "array",
+      "description": "Independently verifiable subtasks; dependsOn edges must form a DAG.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requiredSkills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preferredAgent": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "codex",
+              "kimi-code",
+              "qwen-code",
+              "trae",
+              "dsh"
+            ]
+          },
+          "estimatedEffort": {
+            "type": "string",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in-progress",
+              "completed",
+              "failed",
+              "skipped"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "dependsOn",
+          "requiredSkills",
+          "estimatedEffort",
+          "acceptanceCriteria"
+        ]
+      }
+    },
+    "subTaskId": {
+      "type": "string",
+      "description": "Subtask to update for set-status."
+    },
+    "status": {
+      "type": "string",
+      "description": "New status for set-status.",
+      "enum": [
+        "pending",
+        "in-progress",
+        "completed",
+        "failed",
+        "skipped"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_review`
+
+Assemble the evidence one review round reads: the plan and its acceptance criteria, the checkpoints taken, the diff of the task's commit range, and the tail of the supervised terminal's log. Judge the returned packet yourself, then record the findings with supervisor_issue.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "description": "Task under review."
+    },
+    "baseCommit": {
+      "type": "string",
+      "description": "Revision the task started from; with a repository this adds the diff."
+    },
+    "headCommit": {
+      "type": "string",
+      "description": "Revision to diff against; defaults to the newest checkpoint commit."
+    },
+    "terminalSessionId": {
+      "type": "string",
+      "description": "Supervised terminal whose output log to include."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Directory whose repository is diffed; defaults to the workspace directory."
+    }
+  },
+  "required": [
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_status`
+
+Report every terminal this supervisor is watching: heartbeat age, staleness, last observed status, and the tasks with their subtask progress. Check this before deciding to intervene.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Restrict the report to one terminal session."
+    }
+  }
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_terminal_read`
+
+Read retained scrollback from a supervised terminal without sending anything, and scan it for L1 rule hits. A read observes text that was already produced, so it does not advance the heartbeat or append to the output log.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Offset from the newest retained line; defaults to 0."
+    },
+    "count": {
+      "type": "integer",
+      "description": "Requested line count; the backend may cap it."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal; remembered for later classifications.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_terminal_run`
+
+Send one shell command to a supervised terminal and wait until that command finishes, detected by a unique marker it echoes afterwards. Use it when the next step depends on the command having completed; supervisor_terminal_send only waits for the next quiet settlement and cannot tell a finished command from a paused one.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "command": {
+      "type": "string",
+      "description": "Shell command to run; it is wrapped, not altered."
+    },
+    "timeoutSec": {
+      "type": "integer",
+      "description": "Seconds to wait for the marker; defaults to the configured run timeout."
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task this run belongs to; scopes the spill log."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId",
+    "command"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_terminal_send`
+
+Send text to a supervised terminal and wait for the next settlement. Use it to answer prompts, send /model switches, or inject follow-up instructions. Returns the output, why the wait returned, deterministic state marks, and L1 rule hits.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "text": {
+      "type": "string",
+      "description": "Text to send; include the full command, e.g. \"/model sonnet\"."
+    },
+    "submit": {
+      "type": "boolean",
+      "description": "Press Enter after the text; defaults to true."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal; remembered for later classifications.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId",
+    "text"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+### `supervisor_terminal_signal`
+
+Send a signal to a supervised terminal, optionally closing it afterwards. Use SIGINT to interrupt a runaway agent before retrying with new instructions.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "signal": {
+      "type": "string",
+      "description": "Signal to deliver.",
+      "enum": [
+        "SIGINT",
+        "SIGTERM",
+        "SIGKILL",
+        "SIGTSTP",
+        "SIGHUP"
+      ]
+    },
+    "close": {
+      "type": "boolean",
+      "description": "Close the terminal after signalling; defaults to false."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the signal is being sent; recorded with the heartbeat."
+    }
+  },
+  "required": [
+    "sessionId",
+    "signal"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-tasks/src/tools.ts`](../packages/supervisor/supervisor-tasks/src/tools.ts)
+
+Planning and durable task state: plan authoring, checkpoints, and review tickets. The component reads the supervised sessions and the plan store from `ctx.supervisor`, and reads every shared path from that service rather than declaring one of its own.
+
+<a id="deepseek-aidsh-supervisor-orchestration"></a>
+
+## `@deepseek-ai/dsh-supervisor-orchestration`
+
+### `supervisor_agent_launch`
+
+Launch a managed CLI agent (Claude Code, Codex, dsh, ...) inside an existing terminal session and hand it the task prompt. Open the terminal first with terminal_open, then call this. Returns the settlement output plus deterministic state marks and L1 rule hits.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id returned by terminal_open."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Which CLI agent to launch.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Task prompt handed to the managed agent."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model substituted into the launch template."
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task this terminal works on; scopes the spill log."
+    },
+    "extraArgs": {
+      "type": "array",
+      "description": "Extra argv appended to the launch command.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "sessionId",
+    "agentKind",
+    "prompt"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_agent_switch`
+
+Switch the model a hosted CLI agent is using, by sending its configured in-session switch command and checking the answer for a rejection. Give either an explicit model or a task phase; a phase resolves through the configured model rules. A CLI without an in-session switch command reports that the terminal must be relaunched instead.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model to switch to; takes precedence over `phase`."
+    },
+    "phase": {
+      "type": "string",
+      "description": "Task phase whose configured model to switch to.",
+      "enum": [
+        "planning",
+        "reasoning",
+        "verification",
+        "coding",
+        "execution",
+        "retrieval"
+      ]
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_checkpoint`
+
+Create, list, or restore a task checkpoint. A checkpoint pins the git commit, the terminal state, and the output log so a crashed or aborted run can resume. Take one at every step boundary and before any risky action.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "create",
+        "list",
+        "restore"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the checkpoint belongs to."
+    },
+    "stepIndex": {
+      "type": "integer",
+      "description": "Plan step index; defaults to 0."
+    },
+    "attempt": {
+      "type": "integer",
+      "description": "1-based attempt number; defaults to 1."
+    },
+    "note": {
+      "type": "string",
+      "description": "Free-form note stored in the checkpoint commit message."
+    },
+    "terminalSessionId": {
+      "type": "string",
+      "description": "Supervised terminal this checkpoint refers to."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Directory whose repository is snapshotted; defaults to the workspace directory."
+    },
+    "checkpointId": {
+      "type": "string",
+      "description": "Checkpoint to restore; defaults to the newest for the task."
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_dispatch`
+
+Report the next batch of subtasks to start: those whose dependencies are complete, capped by the configured concurrency and the subtasks already running. Launch each returned subtask in its own terminal and worktree, then call this again.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "description": "Task whose plan is dispatched."
+    },
+    "active": {
+      "type": "array",
+      "description": "Subtask ids currently running.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_issue`
+
+Record a review round as an issue ticket and walk it through repair: open it with the findings, then mark each repair attempt and each regression result. The ticket escalates by itself once the repair budget runs out, and the redo brief is what you send back to the responsible agent.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "open",
+        "list",
+        "read",
+        "redo",
+        "regression-passed",
+        "regression-failed"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the findings belong to."
+    },
+    "ticketId": {
+      "type": "string",
+      "description": "Ticket to act on; defaults to the newest for the task."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Findings for `open`.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "high",
+              "medium",
+              "low",
+              "nitpick"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "requirement-gap",
+              "test-failure",
+              "code-quality",
+              "security",
+              "computer-use"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "gap": {
+            "type": "string"
+          },
+          "suggestedFix": {
+            "type": "string"
+          },
+          "acceptanceCriterionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "title",
+          "evidence",
+          "gap",
+          "suggestedFix"
+        ]
+      }
+    },
+    "regressionScope": {
+      "type": "array",
+      "description": "Checks the repair must re-run.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "redoInstructions": {
+      "type": "string",
+      "description": "Instructions handed to the responsible agent."
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_plan`
+
+Persist, read, or update the plan for a task. Write the plan once after decomposing the goal into independently verifiable subtasks, then update subtask statuses as they complete. The plan is what the checkpoint restore and the delivery report read back.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "write",
+        "read",
+        "set-status"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the plan belongs to."
+    },
+    "goal": {
+      "type": "string",
+      "description": "Task goal; required for write."
+    },
+    "constraints": {
+      "type": "array",
+      "description": "Constraints the hosted agents must respect.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "integrationStrategy": {
+      "type": "string",
+      "description": "How subtask work is merged.",
+      "enum": [
+        "sequential-merge",
+        "parallel-merge",
+        "staged"
+      ]
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "description": "Task-level acceptance criteria.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "verificationMethod": {
+            "type": "string",
+            "enum": [
+              "test-command",
+              "file-exists",
+              "output-contains",
+              "manual",
+              "llm-judge"
+            ]
+          },
+          "verificationSpec": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {}
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "passed",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "verificationMethod"
+        ]
+      }
+    },
+    "subTasks": {
+      "type": "array",
+      "description": "Independently verifiable subtasks; dependsOn edges must form a DAG.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requiredSkills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preferredAgent": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "codex",
+              "kimi-code",
+              "qwen-code",
+              "trae",
+              "dsh"
+            ]
+          },
+          "estimatedEffort": {
+            "type": "string",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in-progress",
+              "completed",
+              "failed",
+              "skipped"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "dependsOn",
+          "requiredSkills",
+          "estimatedEffort",
+          "acceptanceCriteria"
+        ]
+      }
+    },
+    "subTaskId": {
+      "type": "string",
+      "description": "Subtask to update for set-status."
+    },
+    "status": {
+      "type": "string",
+      "description": "New status for set-status.",
+      "enum": [
+        "pending",
+        "in-progress",
+        "completed",
+        "failed",
+        "skipped"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_review`
+
+Assemble the evidence one review round reads: the plan and its acceptance criteria, the checkpoints taken, the diff of the task's commit range, and the tail of the supervised terminal's log. Judge the returned packet yourself, then record the findings with supervisor_issue.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "description": "Task under review."
+    },
+    "baseCommit": {
+      "type": "string",
+      "description": "Revision the task started from; with a repository this adds the diff."
+    },
+    "headCommit": {
+      "type": "string",
+      "description": "Revision to diff against; defaults to the newest checkpoint commit."
+    },
+    "terminalSessionId": {
+      "type": "string",
+      "description": "Supervised terminal whose output log to include."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Directory whose repository is diffed; defaults to the workspace directory."
+    }
+  },
+  "required": [
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_skills`
+
+Scan the hosted CLIs for the skills they have loaded, cache the inventories, and rank them against a subtask's required skills. Call it before assigning work, then name the chosen skills in the launch prompt.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "Scan the agent roots, or read the cached inventories.",
+      "enum": [
+        "scan",
+        "list"
+      ]
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Restrict a scan or listing to one agent.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    },
+    "requiredSkills": {
+      "type": "array",
+      "description": "Skills a subtask needs; ranked matches come back in `matches`.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "action"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_status`
+
+Report every terminal this supervisor is watching: heartbeat age, staleness, last observed status, and the tasks with their subtask progress. Check this before deciding to intervene.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Restrict the report to one terminal session."
+    }
+  }
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_terminal_read`
+
+Read retained scrollback from a supervised terminal without sending anything, and scan it for L1 rule hits. A read observes text that was already produced, so it does not advance the heartbeat or append to the output log.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Offset from the newest retained line; defaults to 0."
+    },
+    "count": {
+      "type": "integer",
+      "description": "Requested line count; the backend may cap it."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal; remembered for later classifications.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_terminal_run`
+
+Send one shell command to a supervised terminal and wait until that command finishes, detected by a unique marker it echoes afterwards. Use it when the next step depends on the command having completed; supervisor_terminal_send only waits for the next quiet settlement and cannot tell a finished command from a paused one.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "command": {
+      "type": "string",
+      "description": "Shell command to run; it is wrapped, not altered."
+    },
+    "timeoutSec": {
+      "type": "integer",
+      "description": "Seconds to wait for the marker; defaults to the configured run timeout."
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task this run belongs to; scopes the spill log."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId",
+    "command"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_terminal_send`
+
+Send text to a supervised terminal and wait for the next settlement. Use it to answer prompts, send /model switches, or inject follow-up instructions. Returns the output, why the wait returned, deterministic state marks, and L1 rule hits.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "text": {
+      "type": "string",
+      "description": "Text to send; include the full command, e.g. \"/model sonnet\"."
+    },
+    "submit": {
+      "type": "boolean",
+      "description": "Press Enter after the text; defaults to true."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal; remembered for later classifications.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId",
+    "text"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_terminal_signal`
+
+Send a signal to a supervised terminal, optionally closing it afterwards. Use SIGINT to interrupt a runaway agent before retrying with new instructions.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "signal": {
+      "type": "string",
+      "description": "Signal to deliver.",
+      "enum": [
+        "SIGINT",
+        "SIGTERM",
+        "SIGKILL",
+        "SIGTSTP",
+        "SIGHUP"
+      ]
+    },
+    "close": {
+      "type": "boolean",
+      "description": "Close the terminal after signalling; defaults to false."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the signal is being sent; recorded with the heartbeat."
+    }
+  },
+  "required": [
+    "sessionId",
+    "signal"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+### `supervisor_worktree`
+
+Give each subtask its own git worktree so parallel agents never edit the same files, and merge finished branches back in dependency order. Create one worktree per subtask before dispatching it, and integrate once every subtask reports complete.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "create",
+        "list",
+        "remove",
+        "integrate"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the worktrees belong to."
+    },
+    "subTaskId": {
+      "type": "string",
+      "description": "Subtask to create or remove a worktree for."
+    },
+    "baseRef": {
+      "type": "string",
+      "description": "Revision a new worktree starts from; defaults to HEAD."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Directory whose repository is used; defaults to the workspace directory."
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-orchestration/src/tools.ts`](../packages/supervisor/supervisor-orchestration/src/tools.ts)
+
+Skill inventories, phase-based model switching, worktrees, and dispatch. The worktree manager takes its git runner from `ctx.supervisorTasks` and its base directory from `ctx.supervisor`, so one state layout stays authoritative.
+
+<a id="deepseek-aidsh-supervisor-ops"></a>
+
+## `@deepseek-ai/dsh-supervisor-ops`
+
+### `supervisor_agent_launch`
+
+Launch a managed CLI agent (Claude Code, Codex, dsh, ...) inside an existing terminal session and hand it the task prompt. Open the terminal first with terminal_open, then call this. Returns the settlement output plus deterministic state marks and L1 rule hits.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id returned by terminal_open."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Which CLI agent to launch.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Task prompt handed to the managed agent."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model substituted into the launch template."
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task this terminal works on; scopes the spill log."
+    },
+    "extraArgs": {
+      "type": "array",
+      "description": "Extra argv appended to the launch command.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "sessionId",
+    "agentKind",
+    "prompt"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_budget`
+
+Record what one hosted agent reported spending and read the running totals against the task and daily budgets. Record after every settlement that names a token count, and check the status before starting another expensive step.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "Record usage, or read the totals.",
+      "enum": [
+        "record",
+        "status"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "description": "Terminal output to parse a token count out of; used when `tokens` is absent."
+    },
+    "tokens": {
+      "type": "integer",
+      "description": "Token count the caller already knows."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model that produced the usage; priced from the configured table."
+    },
+    "costUSD": {
+      "type": "number",
+      "description": "Cost the caller knows better than the price table."
+    }
+  },
+  "required": [
+    "action"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_checkpoint`
+
+Create, list, or restore a task checkpoint. A checkpoint pins the git commit, the terminal state, and the output log so a crashed or aborted run can resume. Take one at every step boundary and before any risky action.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "create",
+        "list",
+        "restore"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the checkpoint belongs to."
+    },
+    "stepIndex": {
+      "type": "integer",
+      "description": "Plan step index; defaults to 0."
+    },
+    "attempt": {
+      "type": "integer",
+      "description": "1-based attempt number; defaults to 1."
+    },
+    "note": {
+      "type": "string",
+      "description": "Free-form note stored in the checkpoint commit message."
+    },
+    "terminalSessionId": {
+      "type": "string",
+      "description": "Supervised terminal this checkpoint refers to."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Directory whose repository is snapshotted; defaults to the workspace directory."
+    },
+    "checkpointId": {
+      "type": "string",
+      "description": "Checkpoint to restore; defaults to the newest for the task."
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_issue`
+
+Record a review round as an issue ticket and walk it through repair: open it with the findings, then mark each repair attempt and each regression result. The ticket escalates by itself once the repair budget runs out, and the redo brief is what you send back to the responsible agent.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "open",
+        "list",
+        "read",
+        "redo",
+        "regression-passed",
+        "regression-failed"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the findings belong to."
+    },
+    "ticketId": {
+      "type": "string",
+      "description": "Ticket to act on; defaults to the newest for the task."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Findings for `open`.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "high",
+              "medium",
+              "low",
+              "nitpick"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "requirement-gap",
+              "test-failure",
+              "code-quality",
+              "security",
+              "computer-use"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "gap": {
+            "type": "string"
+          },
+          "suggestedFix": {
+            "type": "string"
+          },
+          "acceptanceCriterionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "title",
+          "evidence",
+          "gap",
+          "suggestedFix"
+        ]
+      }
+    },
+    "regressionScope": {
+      "type": "array",
+      "description": "Checks the repair must re-run.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "redoInstructions": {
+      "type": "string",
+      "description": "Instructions handed to the responsible agent."
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_notify`
+
+Push one notification to a chat conversation through the transport the deployment registered. Use it for completion, abnormal endings, budget alerts, and to ask a human a question the run cannot answer itself.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "chatId": {
+      "type": "string",
+      "description": "Conversation to send to."
+    },
+    "event": {
+      "type": "string",
+      "description": "What happened.",
+      "enum": [
+        "task-completed",
+        "task-abnormal",
+        "budget-alert",
+        "checkpoint-taken",
+        "limit-paused"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the notification is about."
+    },
+    "detail": {
+      "type": "string",
+      "description": "Extra line appended to the notification."
+    }
+  },
+  "required": [
+    "chatId",
+    "event"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_plan`
+
+Persist, read, or update the plan for a task. Write the plan once after decomposing the goal into independently verifiable subtasks, then update subtask statuses as they complete. The plan is what the checkpoint restore and the delivery report read back.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "What to do.",
+      "enum": [
+        "write",
+        "read",
+        "set-status"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task the plan belongs to."
+    },
+    "goal": {
+      "type": "string",
+      "description": "Task goal; required for write."
+    },
+    "constraints": {
+      "type": "array",
+      "description": "Constraints the hosted agents must respect.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "integrationStrategy": {
+      "type": "string",
+      "description": "How subtask work is merged.",
+      "enum": [
+        "sequential-merge",
+        "parallel-merge",
+        "staged"
+      ]
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "description": "Task-level acceptance criteria.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "verificationMethod": {
+            "type": "string",
+            "enum": [
+              "test-command",
+              "file-exists",
+              "output-contains",
+              "manual",
+              "llm-judge"
+            ]
+          },
+          "verificationSpec": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {}
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "passed",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "verificationMethod"
+        ]
+      }
+    },
+    "subTasks": {
+      "type": "array",
+      "description": "Independently verifiable subtasks; dependsOn edges must form a DAG.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requiredSkills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preferredAgent": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "codex",
+              "kimi-code",
+              "qwen-code",
+              "trae",
+              "dsh"
+            ]
+          },
+          "estimatedEffort": {
+            "type": "string",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in-progress",
+              "completed",
+              "failed",
+              "skipped"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "dependsOn",
+          "requiredSkills",
+          "estimatedEffort",
+          "acceptanceCriteria"
+        ]
+      }
+    },
+    "subTaskId": {
+      "type": "string",
+      "description": "Subtask to update for set-status."
+    },
+    "status": {
+      "type": "string",
+      "description": "New status for set-status.",
+      "enum": [
+        "pending",
+        "in-progress",
+        "completed",
+        "failed",
+        "skipped"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_report`
+
+Render and store the delivery report for a finished task. The deterministic sections come from the stored plan, checkpoints, and git statistics; supply the review summary and follow-ups yourself.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "description": "Task the report covers."
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-readable task title."
+    },
+    "outcome": {
+      "type": "string",
+      "description": "Final outcome.",
+      "enum": [
+        "completed",
+        "partial",
+        "aborted"
+      ]
+    },
+    "startedAt": {
+      "type": "string",
+      "description": "ISO timestamp the task started."
+    },
+    "baseCommit": {
+      "type": "string",
+      "description": "Revision the task started from, for the change summary."
+    },
+    "reviewSummary": {
+      "type": "string",
+      "description": "Review findings, in Markdown."
+    },
+    "followUps": {
+      "type": "array",
+      "description": "Suggested follow-up work.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rollback": {
+      "type": "string",
+      "description": "Rollback instructions shown in the report."
+    }
+  },
+  "required": [
+    "taskId",
+    "title",
+    "outcome"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_review`
+
+Assemble the evidence one review round reads: the plan and its acceptance criteria, the checkpoints taken, the diff of the task's commit range, and the tail of the supervised terminal's log. Judge the returned packet yourself, then record the findings with supervisor_issue.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "description": "Task under review."
+    },
+    "baseCommit": {
+      "type": "string",
+      "description": "Revision the task started from; with a repository this adds the diff."
+    },
+    "headCommit": {
+      "type": "string",
+      "description": "Revision to diff against; defaults to the newest checkpoint commit."
+    },
+    "terminalSessionId": {
+      "type": "string",
+      "description": "Supervised terminal whose output log to include."
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Directory whose repository is diffed; defaults to the workspace directory."
+    }
+  },
+  "required": [
+    "taskId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_shutdown`
+
+Decide whether the machine may be shut down now. The plugin never runs the command itself: it reports the operator-configured command and whether this trigger permits it, so a deployment decides what to execute.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "trigger": {
+      "type": "string",
+      "description": "Why a shutdown is being considered.",
+      "enum": [
+        "all-tasks-completed",
+        "scheduled-time",
+        "idle-timeout"
+      ]
+    },
+    "lastTaskFinishedAt": {
+      "type": "string",
+      "description": "ISO timestamp the last task finished, for the grace period."
+    }
+  },
+  "required": [
+    "trigger"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_status`
+
+Report every terminal this supervisor is watching: heartbeat age, staleness, last observed status, and the tasks with their subtask progress. Check this before deciding to intervene.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Restrict the report to one terminal session."
+    }
+  }
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_terminal_read`
+
+Read retained scrollback from a supervised terminal without sending anything, and scan it for L1 rule hits. A read observes text that was already produced, so it does not advance the heartbeat or append to the output log.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Offset from the newest retained line; defaults to 0."
+    },
+    "count": {
+      "type": "integer",
+      "description": "Requested line count; the backend may cap it."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal; remembered for later classifications.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_terminal_run`
+
+Send one shell command to a supervised terminal and wait until that command finishes, detected by a unique marker it echoes afterwards. Use it when the next step depends on the command having completed; supervisor_terminal_send only waits for the next quiet settlement and cannot tell a finished command from a paused one.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "command": {
+      "type": "string",
+      "description": "Shell command to run; it is wrapped, not altered."
+    },
+    "timeoutSec": {
+      "type": "integer",
+      "description": "Seconds to wait for the marker; defaults to the configured run timeout."
+    },
+    "taskId": {
+      "type": "string",
+      "description": "Task this run belongs to; scopes the spill log."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId",
+    "command"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_terminal_send`
+
+Send text to a supervised terminal and wait for the next settlement. Use it to answer prompts, send /model switches, or inject follow-up instructions. Returns the output, why the wait returned, deterministic state marks, and L1 rule hits.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "text": {
+      "type": "string",
+      "description": "Text to send; include the full command, e.g. \"/model sonnet\"."
+    },
+    "submit": {
+      "type": "boolean",
+      "description": "Press Enter after the text; defaults to true."
+    },
+    "agentKind": {
+      "type": "string",
+      "description": "Hosted CLI, declared when the supervisor did not launch this terminal; remembered for later classifications.",
+      "enum": [
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "qwen-code",
+        "trae",
+        "dsh"
+      ]
+    }
+  },
+  "required": [
+    "sessionId",
+    "text"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+### `supervisor_terminal_signal`
+
+Send a signal to a supervised terminal, optionally closing it afterwards. Use SIGINT to interrupt a runaway agent before retrying with new instructions.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Terminal session id."
+    },
+    "signal": {
+      "type": "string",
+      "description": "Signal to deliver.",
+      "enum": [
+        "SIGINT",
+        "SIGTERM",
+        "SIGKILL",
+        "SIGTSTP",
+        "SIGHUP"
+      ]
+    },
+    "close": {
+      "type": "boolean",
+      "description": "Close the terminal after signalling; defaults to false."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the signal is being sent; recorded with the heartbeat."
+    }
+  },
+  "required": [
+    "sessionId",
+    "signal"
+  ]
+}
+```
+
+Source: [`packages/supervisor/supervisor-ops/src/tools.ts`](../packages/supervisor/supervisor-ops/src/tools.ts)
+
+Budget, delivery reports, chat notifications, and the shutdown gate. The chat transport is a deployment seam: `ctx.supervisorOps.useChatTransport` registers a provider and owns the inbound routing, and with none registered `supervisor_notify` reports that no transport exists.
 
 <a id="deepseek-aidsh-schedule"></a>
 

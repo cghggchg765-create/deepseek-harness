@@ -3167,6 +3167,307 @@ export interface Config {
 
 来源： [`packages/subagent/subagent-spawn-in-process/src/index.ts:25`](../packages/subagent/subagent-spawn-in-process/src/index.ts)
 
+<a id="deepseek-aidsh-supervisor-core"></a>
+
+## `@deepseek-ai/dsh-supervisor-core`
+
+需要：`tools` · `terminals`
+
+```ts config-catalog
+/** Plugin configuration as authored in cordis.yml. */
+export interface SupervisorConfig {
+  /** Directory holding plans, heartbeats, and spill logs. */
+  stateDir?: string
+  /** Working directory the state directory is resolved against. */
+  workspaceDir?: string
+  /** Directory worktrees are created under; a relative path resolves against `workspaceDir`. */
+  worktreeBase?: string
+  /** Per-agent launch templates, merged over the built-in defaults. */
+  agents?: Partial<Record<AgentKind, AgentTemplate>>
+  /** Profile substituted into `{profile}`; the dsh template uses it. */
+  defaultProfile?: string
+  /** Shell dialect used to quote substituted launch values. */
+  shellQuoting?: ShellQuoting
+  /** L1 rule overrides. */
+  rules?: RuleOverride[]
+  /** Detection thresholds, merged over the defaults. */
+  detection?: Partial<DetectionThresholds>
+  /** Progress-breaker limits, merged over the defaults. */
+  breaker?: Partial<BreakerPolicy>
+  /** Whether a parsed usage-limit reset schedules an automatic resume. */
+  limitResumeEnabled?: boolean
+  /** Append every observed settlement to a per-terminal log. */
+  spillEnabled?: boolean
+  /** Byte cap for one terminal's spill log. */
+  spillMaxBytes?: number
+  /** Default seconds `supervisor_terminal_run` waits for its completion marker. */
+  runTimeoutSec?: number
+  /** Milliseconds between completion-marker polls. */
+  runPollIntervalMs?: number
+  /** Seconds without output after which a heartbeat counts as stale. */
+  heartbeatTimeoutSec?: number
+  /** Poll interval of the watchdog that wakes an idle agent on a stale terminal. */
+  watchdogIntervalSec?: number
+  /** Seconds between watchdog alerts for the same terminal. */
+  watchdogCooldownSec?: number
+  /** Start the watchdog when the plugin loads. */
+  watchdogEnabled?: boolean
+}
+
+/** External CLI agent kinds this plugin knows how to launch and drive. */
+export type AgentKind = 'claude-code' | 'codex' | 'kimi-code' | 'qwen-code' | 'trae' | 'dsh'
+
+/** Launch, resume, and switch commands for one hosted agent CLI. */
+export interface AgentTemplate {
+  /** Launch command; `{model}`, `{prompt}`, and `{profile}` are substituted. */
+  startCommand: string
+  /** Native resume command, when the CLI has one. */
+  resumeCommand?: string
+  /** In-session model switch command; empty when the CLI cannot switch while running. */
+  modelSwitchCommand?: string
+}
+
+/** Shell dialect used to quote substituted values. */
+export type ShellQuoting = 'posix' | 'powershell' | 'none'
+
+/** Configuration override for one rule id. */
+export interface RuleOverride {
+  /** Rule to override; must name a built-in rule. */
+  id: string
+  /** Set false to disable the rule. */
+  enabled?: boolean
+  /** Replacement severity for every hit. */
+  severity?: L1Severity
+  /** Literal keywords for `goal-drift-signal`; replacing the list replaces the matcher. */
+  keywords?: string[]
+}
+
+/** Tunable thresholds for the window and size rules. */
+export interface DetectionThresholds {
+  /** Consecutive failed observations that raise `error-streak`. */
+  errorStreakThreshold: number
+  /** Repeated identical observations inside the window that raise `empty-loop`. */
+  repeatThreshold: number
+  /** Window length in minutes for `empty-loop` and `error-streak`. */
+  repeatWindowMin: number
+  /** Non-zero exits inside the crash window that raise `crash-loop`. */
+  maxRestarts: number
+  /** Crash window length in minutes. */
+  crashWindowMin: number
+  /** Bytes in one settlement that raise `context-bloat`. */
+  contextBloatBytes: number
+  /** Seconds without output after which a settlement is marked `silence`. */
+  silenceThresholdSec: number
+}
+
+/** Tunable breaker limits. */
+export interface BreakerPolicy {
+  /** Consecutive identical settlements that move `closed` to `half-open`. */
+  noProgressLimit: number
+  /** Consecutive identical settlements that move `half-open` to `open`. */
+  openLimit: number
+  /** Seconds an open breaker waits before allowing one re-probe. */
+  cooldownSec: number
+}
+
+/** Severity ladder shared by L1 rules and checkpoint failure escalation. */
+export type L1Severity = 'low' | 'medium' | 'high' | 'critical'
+```
+
+来源：[`packages/supervisor/supervisor-core/src/runtime.ts:38`](../packages/supervisor/supervisor-core/src/runtime.ts)
+
+<a id="deepseek-aidsh-supervisor-ops"></a>
+
+## `@deepseek-ai/dsh-supervisor-ops`
+
+需要：`tools` · `supervisor` · `supervisorTasks`
+
+```ts config-catalog
+/** Operations configuration as authored in cordis.yml. */
+export interface SupervisorOpsConfig {
+  /** Budget limits, merged over the defaults. */
+  budget?: Partial<BudgetPolicy>
+  /** Model price table used to turn token counts into money. */
+  modelPrices?: ModelPrice[]
+  /** Shutdown policy, merged over the defaults. */
+  shutdown?: Partial<ShutdownPolicy>
+}
+
+/** Budget limits and the action taken when one is crossed. */
+export interface BudgetPolicy {
+  /** Dollars allowed for one task. */
+  taskBudgetUSD: number
+  /** Dollars allowed per calendar day. */
+  dailyBudgetUSD: number
+  /** Percentage of a budget at which the caller is warned. */
+  alertThresholdPct: number
+  /** Action the supervising model should take once a budget is exceeded. */
+  onExceed: 'downgrade-all' | 'stop-task'
+}
+
+/** Token price of one model, used to turn a token count into money. */
+export interface ModelPrice {
+  /** Model id the price applies to. */
+  model: string
+  /** US dollars per one million tokens. */
+  usdPerMillionTokens: number
+}
+
+/** When the supervisor may shut the machine down. */
+export interface ShutdownPolicy {
+  /** Whether shutdown is permitted at all. */
+  enabled: boolean
+  /** Operator-supplied command to run; empty means shutdown is not configured. */
+  command: string
+  /** Minutes to wait after the last task finishes before shutting down. */
+  gracePeriodMin: number
+}
+```
+
+来源：[`packages/supervisor/supervisor-ops/src/index.ts:37`](../packages/supervisor/supervisor-ops/src/index.ts)
+
+<a id="deepseek-aidsh-supervisor-orchestration"></a>
+
+## `@deepseek-ai/dsh-supervisor-orchestration`
+
+需要：`tools` · `terminals` · `supervisor` · `supervisorTasks`
+
+```ts config-catalog
+/** Plugin configuration as authored in cordis.yml. */
+export interface OrchestrationConfig {
+  /** Phase-to-model rules `supervisor_agent_switch` resolves a phase through. */
+  modelRules?: ModelRule[]
+  /** Roots the skill scan reads. */
+  skillRoots?: {
+    /** Operator home directory the per-agent skill roots resolve under; defaults to the OS home directory. */
+    homeDir?: string
+    /** Workspace the project-local skill roots resolve under; defaults to the core workspace directory. */
+    workspaceDir?: string
+  }
+  /** Prefix of the branch each worktree checks out. */
+  worktreeBranchPrefix?: string
+  /** Terminals `supervisor_dispatch` may start at once. */
+  maxConcurrency?: number
+}
+
+/** Configured model choice for one or more phases. */
+export interface ModelRule {
+  /** Phases this rule applies to. */
+  phases: TaskPhase[]
+  /** Model selected for those phases. */
+  model: string
+  /** Models to try, in order, when the selected model is rejected. */
+  fallbackModels?: string[]
+}
+
+/** One phase of supervised work whose model can be chosen deliberately. */
+export type TaskPhase = 'planning' | 'reasoning' | 'verification' | 'coding' | 'execution' | 'retrieval'
+```
+
+来源：[`packages/supervisor/supervisor-orchestration/src/config.ts:17`](../packages/supervisor/supervisor-orchestration/src/config.ts)
+
+<a id="deepseek-aidsh-supervisor-pacing"></a>
+
+## `@deepseek-ai/dsh-supervisor-pacing`
+
+需要：`agents` · `sessions` · `sessionProjections`
+
+```ts config-catalog
+/** Plugin configuration as authored in cordis.yml. */
+export interface PacingConfig {
+  /** Whether automatic pacing runs at all. */
+  enabled?: boolean
+  /** Agents paced: the roots a human drives, or every agent including subagents. */
+  scope?: 'roots' | 'all'
+  /** Failure codes pacing resumes; any other code is reported and left alone. */
+  codes?: string[]
+  /** First backoff delay for a failure that states no resume instant. */
+  initialDelayMs?: number
+  /** Ceiling for a computed backoff delay. */
+  maxDelayMs?: number
+  /** Fraction of a backoff delay applied as symmetric jitter. */
+  jitterRatio?: number
+  /** Wait added past a stated reset before resuming. */
+  bufferMs?: number
+  /** Longest resume delay honored; a later stated instant is clamped to it. */
+  maxResumeDelayMs?: number
+  /** Minimum spacing between two automatic resumes for one session. */
+  minIntervalMs?: number
+  /** Consecutive automatic resumes allowed before pacing gives up. */
+  maxResumesPerSession?: number
+  /** Re-arm an active goal the failure disarmed, so its rounds continue. */
+  resumeGoals?: boolean
+  /** Resume a session whose last turn failed before this process started. */
+  resumeOnRestart?: boolean
+  /** Report a give-up to the chat transport, when one is registered. */
+  notifyOnGiveUp?: boolean
+  /** Conversation a give-up alert is sent to; empty disables the alert. */
+  notifyChatId?: string
+}
+```
+
+来源：[`packages/supervisor/supervisor-pacing/src/index.ts:55`](../packages/supervisor/supervisor-pacing/src/index.ts)
+
+<a id="deepseek-aidsh-supervisor-shutdown"></a>
+
+## `@deepseek-ai/dsh-supervisor-shutdown`
+
+需要：`tools` · `shell` · `supervisor` · `supervisorOps`
+
+```ts config-catalog
+/** Plugin configuration as authored in cordis.yml. */
+export interface ShutdownConfig {
+  /** Whether this component schedules and executes shutdowns at all. */
+  enabled?: boolean
+  /** Local `HH:MM` wall clock the timed shutdown is armed for; empty disables it. */
+  scheduleAt?: string
+  /** Minutes from plugin load the timed shutdown is armed for; 0 disables it. */
+  scheduleAfterMinutes?: number
+  /** Seconds from plugin load the timed shutdown is armed for; 0 disables it, and a configured value wins over the minutes one. */
+  scheduleAfterSeconds?: number
+  /** Fire once every stored task plan finished its subtasks. */
+  watchPlans?: boolean
+  /** Fire after this many minutes without a running agent; 0 disables it. */
+  idleTimeoutMin?: number
+  /** Chat reminders, in minutes before the attempt fires. */
+  remindAtMin?: number[]
+  /** Operator command that cancels a shutdown the OS already scheduled; empty skips cancellation. */
+  cancelCommand?: string
+  /** Conversation reminders and reports are sent to; empty keeps them in the log. */
+  notifyChatId?: string
+  /** Report what would run instead of running it. */
+  dryRun?: boolean
+  /** Seconds between watcher passes. */
+  pollIntervalSec?: number
+  /** Seconds one configured command may run before it is killed. */
+  commandTimeoutSec?: number
+}
+```
+
+来源：[`packages/supervisor/supervisor-shutdown/src/index.ts:45`](../packages/supervisor/supervisor-shutdown/src/index.ts)
+
+<a id="deepseek-aidsh-supervisor-tasks"></a>
+
+## `@deepseek-ai/dsh-supervisor-tasks`
+
+需要：`tools` · `supervisor`
+
+```ts config-catalog
+/** Plugin configuration as authored in cordis.yml. */
+export interface SupervisorTaskConfig {
+  /** Prefix of the branch each checkpoint commits on. */
+  checkpointBranchPrefix?: string
+  /** Checkpoints kept per task; the oldest are removed first. */
+  checkpointMaxPerTask?: number
+  /** Days a checkpoint is kept before retention removes it. */
+  checkpointMaxAgeDays?: number
+  /** Repairs allowed per issue ticket before it escalates. */
+  maxRetriesPerIssue?: number
+}
+```
+
+来源：[`packages/supervisor/supervisor-tasks/src/config.ts:11`](../packages/supervisor/supervisor-tasks/src/config.ts)
+
 <a id="deepseek-aidsh-system-prompt"></a>
 
 ## `@deepseek-ai/dsh-system-prompt`
@@ -4282,6 +4583,7 @@ export interface Config {
 - `@deepseek-ai/dsh-session-telemetry`（[`packages/session/session-telemetry/src/index.ts`](../packages/session/session-telemetry/src/index.ts)）
 - `@deepseek-ai/dsh-session-title-llm`（[`packages/session/session-title-llm/src/index.ts`](../packages/session/session-title-llm/src/index.ts)）
 - `@deepseek-ai/dsh-subagent-in-process-driver`（[`packages/subagent/subagent-in-process-driver/src/index.ts`](../packages/subagent/subagent-in-process-driver/src/index.ts)）
+- `@deepseek-ai/dsh-supervisor`（[`packages/supervisor/supervisor/src/index.ts`](../packages/supervisor/supervisor/src/index.ts)）
 - `@deepseek-ai/dsh-timeout`（[`packages/util/timeout/src/index.ts`](../packages/util/timeout/src/index.ts)）
 - `@deepseek-ai/dsh-typert-generator`（[`packages/typert/generator/src/index.ts`](../packages/typert/generator/src/index.ts)）
 - `@deepseek-ai/dsh-typert-protocol`（[`packages/typert/protocol/src/index.ts`](../packages/typert/protocol/src/index.ts)）

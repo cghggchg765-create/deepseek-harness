@@ -1177,6 +1177,41 @@
       "source": "packages/terminal/terminal/src/types.ts"
     },
     {
+      "doc": "docs/subsystems/supervisor.md",
+      "symbol": "GitRef",
+      "source": "packages/supervisor/supervisor-core/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/supervisor.md",
+      "symbol": "L1RuleHit",
+      "source": "packages/supervisor/supervisor-core/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/supervisor.md",
+      "symbol": "StateMark",
+      "source": "packages/supervisor/supervisor-core/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/supervisor.md",
+      "symbol": "SubTask",
+      "source": "packages/supervisor/supervisor-core/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/supervisor.md",
+      "symbol": "TerminalStateRecord",
+      "source": "packages/supervisor/supervisor-core/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/supervisor.md",
+      "symbol": "Finding",
+      "source": "packages/supervisor/supervisor-tasks/src/review.ts"
+    },
+    {
+      "doc": "docs/subsystems/supervisor.md",
+      "symbol": "IssueTicket",
+      "source": "packages/supervisor/supervisor-tasks/src/review.ts"
+    },
+    {
       "doc": "docs/subsystems/sandbox.md",
       "symbol": "SandboxMode",
       "source": "packages/sandbox/sandbox/src/index.ts"

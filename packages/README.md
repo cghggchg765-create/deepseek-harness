@@ -52,6 +52,7 @@ Every package lives in exactly one group; new packages join existing groups, and
 | [`context/`](context/README.md) | Model-visible request context: workspace instructions, time context, references |
 | [`subagent/`](subagent/README.md) | Subagent capability family: provider-registry contract and model-facing delegation tools |
 | [`jobs/`](jobs/README.md) | Generic background-job runtime and model-facing job control tools |
+| [`supervisor/`](supervisor/README.md) | Supervised terminals bundle: six switchable components hosting CLI agents and storing durable plans and checkpoints |
 | [`experimental/`](experimental/README.md) | Pre-stable prototypes with explicit private exceptions |
 | [`workflow/`](workflow/README.md) | Workflow seam, PTC process engine, and model-facing `workflow`/`ralph` tools |
 | [`webhook/`](webhook/README.md) | Verified external events, trusted rules, and fire-and-forget Workspace Sessions |

@@ -323,6 +323,7 @@ const subsystemGroups = [
     ['shell.md', 'Bash 执行', 'Bash execution'],
     ['subprocess.md', '子进程', 'Subprocesses'],
     ['terminal.md', 'PTY 会话', 'PTY sessions'],
+    ['supervisor.md', '受管终端', 'Supervised terminals'],
     ['jobs.md', '后台任务', 'Background jobs'],
     ['filesystem.md', '文件系统', 'Filesystem'],
     ['lsp.md', 'LSP 导航', 'LSP navigation'],

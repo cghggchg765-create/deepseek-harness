@@ -199,6 +199,13 @@ flowchart LR
   svc_shellEnv["ctx.shellEnv<br/>Managed bash environment registry"]
   pkg_terminal["terminal"]
   svc_terminals["ctx.terminals<br/>Persistent PTY session registry"]
+  pkg_supervisor_core["supervisor-core"]
+  svc_supervisor["ctx.supervisor<br/>Supervised-terminal control plane"]
+  pkg_supervisor_tasks["supervisor-tasks"]
+  pkg_supervisor_orchestration["supervisor-orchestration"]
+  pkg_supervisor_ops["supervisor-ops"]
+  svc_supervisorTasks["ctx.supervisorTasks<br/>Durable task state for supervised runs"]
+  svc_supervisorOps["ctx.supervisorOps<br/>Budget ledger and chat transport"]
   pkg_sandbox["sandbox"]
   svc_sandbox["ctx.sandbox<br/>Process-sandbox seam"]
   pkg_sandbox_local["sandbox-local"]
@@ -395,6 +402,9 @@ flowchart LR
   pkg_subprocess --> svc_subprocess
   pkg_subprocess_local --> svc_subprocess
   pkg_subprocess_ssh --> svc_subprocess
+  pkg_supervisor_core --> svc_supervisor
+  pkg_supervisor_ops --> svc_supervisorOps
+  pkg_supervisor_tasks --> svc_supervisorTasks
   pkg_system_prompt --> svc_systemPrompt
   pkg_terminal --> svc_terminals
   pkg_terminal_bash --> svc_terminals
@@ -530,6 +540,12 @@ flowchart LR
   svc_subprocess --> pkg_subagent_claude_code
   svc_subprocess --> pkg_subagent_codex
   svc_subprocess --> pkg_terminal_bash
+  svc_supervisor --> pkg_supervisor_ops
+  svc_supervisor --> pkg_supervisor_orchestration
+  svc_supervisor --> pkg_supervisor_tasks
+  svc_supervisorOps --> pkg_supervisor_ops
+  svc_supervisorTasks --> pkg_supervisor_ops
+  svc_supervisorTasks --> pkg_supervisor_orchestration
   svc_systemPrompt --> pkg_agent_loop
   svc_systemPrompt --> pkg_tool_fs
   svc_systemPrompt --> pkg_tool_terminal
@@ -632,6 +648,9 @@ flowchart LR
 | `ctx.shell` | `seam` | [`shell`](../packages/shell/shell) | [`bash-local`](../packages/shell/bash-local), [`bash-sandbox`](../packages/shell/bash-sandbox), [`pwsh-local`](../packages/shell/pwsh-local) | [`tool-bash`](../packages/shell/tool-bash), [`tool-pwsh`](../packages/shell/tool-pwsh), [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex) | - | The model-facing shell tools and hook bridges consume this seam; sandboxed, remote, or PowerShell executors replace bash-local without touching them. |
 | `ctx.shellEnv` | `core` | [`shell-env`](../packages/shell/shell-env) | - | [`tool-bash`](../packages/shell/tool-bash), [`tool-pwsh`](../packages/shell/tool-pwsh) | - | Plugins declare effect-scoped DSH_* facts; each shell tool collects one trusted snapshot per execution and its executor rebuilds the namespace. |
 | `ctx.terminals` | `seam` | [`terminal`](../packages/terminal/terminal) | [`terminal-bash`](../packages/terminal/terminal-bash) | [`tool-terminal`](../packages/terminal/tool-terminal) | - | The registry owns exact-Agent session identity and cleanup; backends own terminal mechanics, while tool-terminal exposes the owner-scoped model tools. |
+| `ctx.supervisor` | `core` | [`supervisor-core`](../packages/supervisor/supervisor-core) | - | [`supervisor-tasks`](../packages/supervisor/supervisor-tasks), [`supervisor-orchestration`](../packages/supervisor/supervisor-orchestration), [`supervisor-ops`](../packages/supervisor/supervisor-ops) | - | Owns the supervised-session registry, the settlement pipeline every terminal tool funnels through, heartbeats, output logs, and the task-plan store; the sibling components read every shared path from its resolved configuration instead of declaring one of their own. |
+| `ctx.supervisorTasks` | `core` | [`supervisor-tasks`](../packages/supervisor/supervisor-tasks) | - | [`supervisor-orchestration`](../packages/supervisor/supervisor-orchestration), [`supervisor-ops`](../packages/supervisor/supervisor-ops) | - | Owns git checkpoints with their retention, review tickets with their repair budget, and the git operations the worktree and delivery-report paths share. |
+| `ctx.supervisorOps` | `core` | [`supervisor-ops`](../packages/supervisor/supervisor-ops) | - | [`supervisor-ops`](../packages/supervisor/supervisor-ops) | - | Reports recorded spend against the task and daily budgets and owns the chat transport seam a deployment registers, including the inbound routing that either answers an escalation or steers the owners of supervised terminals. |
 | `ctx.sandbox` | `seam` | [`sandbox`](../packages/sandbox/sandbox) | [`sandbox-local`](../packages/sandbox/sandbox-local), [`sandbox-ssh`](../packages/ssh/sandbox-ssh) | [`bash-sandbox`](../packages/shell/bash-sandbox), [`terminal-bash`](../packages/terminal/terminal-bash) | - | Consumers hand over the exact argv they are about to spawn; same-world backends wrap it under a per-call policy and report enforcement. |
 | `ctx.sandboxPolicy` | `core` | [`sandbox-policy`](../packages/sandbox/sandbox-policy) | - | [`bash-sandbox`](../packages/shell/bash-sandbox), [`fs-sandbox`](../packages/fs/fs-sandbox), [`terminal-bash`](../packages/terminal/terminal-bash) | - | The one home for the deployment default mode + workspace root; only the sandboxed executor and provider read the service (the tool layers use the pure `sandbox/mode` fold it also exports). Both enforcing families read it so bash and fs cannot confine to different roots. |
 | `ctx.approval` | `seam` | [`user-approval`](../packages/interaction/user-approval) | - | [`tools`](../packages/core/tools), [`tool-bash`](../packages/shell/tool-bash), [`acp`](../packages/acp/acp) | - | One-shot permission decisions dispatched over the `approval/request` waterfall; answerers are listeners (the ACP bridge for its own agents), absence fails closed to `unavailable`. |

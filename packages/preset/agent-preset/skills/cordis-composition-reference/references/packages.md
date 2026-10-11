@@ -442,6 +442,17 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 |---|---|---|
 | `@deepseek-ai/dsh-subprocess-local` | no | Local-subprocess implementation of the DeepSeek Harness subprocess seam |
 
+## supervisor
+
+| Package | Config | Description |
+|---|---|---|
+| `@deepseek-ai/dsh-supervisor-core` | yes | Supervised-terminal core: the registry of driven terminals, the deterministic L1 detection pipeline over their output, heartbeats, output logs, the task-plan store, and the watchdog that wakes an idle agent |
+| `@deepseek-ai/dsh-supervisor-ops` | yes | Operations for supervised runs: usage budget with model price tables and downgrade-or-stop actions, delivery reports assembled from plans and diffs, chat-channel notifications, and a safe shutdown gate |
+| `@deepseek-ai/dsh-supervisor-orchestration` | yes | Orchestration for supervised runs: per-agent skill inventories with matching, phase-based model switching through the hosted CLI, git worktrees that isolate parallel subtasks, and bounded parallel dispatch |
+| `@deepseek-ai/dsh-supervisor-pacing` | yes | Automatic pacing for the supervising agent itself: after its own model request fails, wait out the provider's stated reset or a bounded backoff, then wake the agent for one more turn |
+| `@deepseek-ai/dsh-supervisor-shutdown` | yes | Executes the operator's shutdown command when the supervisor decides the run is over: a wall-clock or countdown timer, a watcher for completed task plans, an idle timeout, chat reminders before the deadline, and a cancel path |
+| `@deepseek-ai/dsh-supervisor-tasks` | yes | Planning and durable task state for supervised runs: plan authoring with subtask graphs, git checkpoints with retention and restartable branches, and review tickets that end in a redo brief |
+
 ## terminal
 
 | Package | Config | Description |
